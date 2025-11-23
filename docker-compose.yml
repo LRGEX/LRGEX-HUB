@@ -1,0 +1,14 @@
+services:
+  lrgex-hub:
+    image: lrgex-hub:local
+    container_name: lrgex-hub
+    build: .
+    ports:
+      - "8587:3000"
+    volumes:
+      # Persist the config folder (includes backups) to the host machine
+      - /mnt/c/Users/n1a1b1/Desktop/lrgex-hub/config:/app/config
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000

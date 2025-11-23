@@ -1,0 +1,549 @@
+
+import React, { useState, useRef, useEffect } from 'react';
+import { sendMessageGemini, sendMessageOpenAi, sendMessageOllama, ToolExecutors } from '../../services/aiService';
+import { ChatMessage, AiSettings, UniversalWidgetConfig, WidgetType } from '../../types';
+import { Send, Bot, User, Loader2, Settings, ShieldAlert, Cpu, Trash2, Copy, Check, RotateCcw, Paperclip, X } from 'lucide-react';
+
+interface AiWidgetProps {
+  settings: AiSettings;
+  onUpdateSettings: (s: AiSettings) => void;
+  onAddWidget: (type: WidgetType, config?: UniversalWidgetConfig) => void;
+  onAddBookmark: (categoryName: string, title: string, url: string, iconUrl?: string, categoryIconUrl?: string) => void;
+}
+
+// --- Simple Markdown Renderer (Zero-Dependency) ---
+const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
+    const parts = content.split(/(```[\s\S]*?```)/g);
+
+    return (
+        <div className="space-y-2 text-xs">
+            {parts.map((part, index) => {
+                if (part.startsWith('```') && part.endsWith('```')) {
+                    const content = part.slice(3, -3).trim();
+                    const match = content.match(/^([a-z0-9]+)\n/i);
+                    const lang = match ? match[1] : '';
+                    const code = match ? content.slice(match[0].length) : content;
+                    
+                    return (
+                        <div key={index} className="my-2 bg-[#1e1e1e] border border-[#333] rounded-md overflow-hidden font-mono group relative">
+                            {lang && <div className="px-2 py-1 bg-[#252525] text-[10px] text-[#888] border-b border-[#333]">{lang}</div>}
+                            <div className="p-2 overflow-x-auto custom-scrollbar text-emerald-300 whitespace-pre">{code}</div>
+                            <button 
+                                onClick={() => navigator.clipboard.writeText(code)}
+                                className="absolute top-2 right-2 p-1 bg-lrgex-panel/50 hover:bg-lrgex-orange text-lrgex-muted hover:text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Copy Code"
+                            >
+                                <Copy size={12} />
+                            </button>
+                        </div>
+                    );
+                }
+
+                return (
+                    <div key={index} className="whitespace-pre-wrap leading-relaxed">
+                         {part.split('\n').map((line, i) => {
+                             if (line.startsWith('### ')) return <h4 key={i} className="font-bold text-sm text-lrgex-orange mt-2 mb-1">{parseInline(line.slice(4))}</h4>;
+                             if (line.startsWith('## ')) return <h3 key={i} className="font-bold text-sm text-lrgex-text mt-3 mb-1">{parseInline(line.slice(3))}</h3>;
+
+                             if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+                                 return (
+                                     <div key={i} className="flex items-start gap-2 pl-1 mb-1">
+                                         <div className="w-1 h-1 rounded-full bg-lrgex-muted mt-1.5 shrink-0" />
+                                         <span>{parseInline(line.trim().substring(2))}</span>
+                                     </div>
+                                 );
+                             }
+                             
+                             const numMatch = line.match(/^(\d+)\.\s/);
+                             if (numMatch) {
+                                return (
+                                     <div key={i} className="flex items-start gap-1 pl-1 mb-1">
+                                         <span className="text-lrgex-muted font-mono text-[10px] pt-0.5">{numMatch[1]}.</span>
+                                         <span>{parseInline(line.substring(numMatch[0].length))}</span>
+                                     </div>
+                                 );
+                             }
+
+                             if (!line.trim()) return <div key={i} className="h-2" />;
+
+                             return <div key={i}>{parseInline(line)}</div>;
+                         })}
+                    </div>
+                );
+            })}
+        </div>
+    );
+};
+
+const parseInline = (text: string): React.ReactNode[] => {
+    if (!text) return [];
+    const regex = /(\*\*.*?\*\*|`.*?`|\[.*?\]\(.*?\))/g;
+    const parts = text.split(regex);
+
+    return parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+            return <strong key={i} className="font-bold text-white">{part.slice(2, -2)}</strong>;
+        }
+        if (part.startsWith('`') && part.endsWith('`')) {
+            return <code key={i} className="bg-lrgex-bg border border-lrgex-border px-1 rounded text-lrgex-orange font-mono text-[10px]">{part.slice(1, -1)}</code>;
+        }
+        const linkMatch = part.match(/^\[(.*?)\]\((.*?)\)$/);
+        if (linkMatch) {
+            return <a key={i} href={linkMatch[2]} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{linkMatch[1]}</a>;
+        }
+        return part;
+    });
+};
+
+
+export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, onAddWidget, onAddBookmark }) => {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Image State
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<any[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isLoading, showSettings, pendingImage]);
+
+  const clearChat = () => {
+      setMessages([]);
+      historyRef.current = [];
+      setPendingImage(null);
+  };
+
+  const toolExecutors: ToolExecutors = {
+    addWidget: async (args) => {
+        let parsedHeaders: Record<string, string> | undefined = undefined;
+        if (args.headers) {
+            try {
+                parsedHeaders = JSON.parse(args.headers);
+            } catch (e) {
+                return "Error: Headers provided were not valid JSON.";
+            }
+        }
+
+        const newConfig: UniversalWidgetConfig = {
+            endpoint: args.endpoint || '', // Endpoint optional for custom widgets
+            jsonPath: args.jsonPath || '',
+            label: args.title,
+            method: 'GET',
+            refreshInterval: args.refreshInterval || 10000,
+            unit: args.unit,
+            headers: parsedHeaders,
+            customCode: args.customCode // Store the AI generated code
+        };
+        onAddWidget(WidgetType.UNIVERSAL, newConfig);
+        return `Created widget "${args.title}"${args.customCode ? ' with custom code' : ''}`;
+    },
+    addBookmark: async (args) => {
+        onAddBookmark(args.categoryName, args.title, args.url, args.iconUrl, args.categoryIconUrl);
+        return `Added bookmark ${args.title} to ${args.categoryName}`;
+    }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+              setPendingImage(reader.result);
+          }
+      };
+      reader.readAsDataURL(file);
+      e.target.value = ''; // Reset
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+      const items = e.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf('image') !== -1) {
+              const blob = items[i].getAsFile();
+              if (blob) {
+                  const reader = new FileReader();
+                  reader.onload = (event) => {
+                      if (typeof event.target?.result === 'string') {
+                          setPendingImage(event.target.result);
+                      }
+                  };
+                  reader.readAsDataURL(blob);
+                  e.preventDefault(); 
+              }
+          }
+      }
+  };
+
+  const handleSend = async (retryText?: string, retryImage?: string) => {
+    const textToSend = retryText || input;
+    const imageToSend = retryImage || (pendingImage || undefined);
+
+    if (!textToSend.trim() && !imageToSend) return;
+    if (isLoading) return;
+
+    if (settings.provider === 'GEMINI' && !settings.geminiKey) {
+        setMessages(p => [...p, { role: 'system', text: "Please set your Gemini API Key." }]);
+        setShowSettings(true);
+        return;
+    }
+    if ((settings.provider === 'OPENROUTER') && !settings.openRouterKey) {
+        setMessages(p => [...p, { role: 'system', text: "Please set your OpenRouter API Key." }]);
+        setShowSettings(true);
+        return;
+    }
+
+    const userMsg: ChatMessage = { role: 'user', text: textToSend, image: imageToSend };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setPendingImage(null); 
+    setIsLoading(true);
+
+    try {
+      let responseText = "";
+      const history = historyRef.current.map(h => ({
+            role: h.role,
+            parts: [{ text: (h.text && h.text.trim() !== "") ? h.text : " " }] 
+      }));
+
+      let res;
+      const providers = {
+          'GEMINI': sendMessageGemini,
+          'OPENROUTER': (h:any, m:string, s:any, t:any, i:any) => sendMessageOpenAi(h, m, s, t, true, i),
+          'OPENAI': (h:any, m:string, s:any, t:any, i:any) => sendMessageOpenAi(h, m, s, t, false, i),
+          'OLLAMA': sendMessageOllama
+      };
+      
+      const selectedProvider = providers[settings.provider];
+      if (selectedProvider) {
+          res = await selectedProvider(history, userMsg.text, settings, toolExecutors, imageToSend);
+      }
+      
+      if (res) {
+        responseText = res.text || " ";
+        historyRef.current.push({ role: 'user', text: userMsg.text });
+        historyRef.current.push({ role: 'model', text: responseText });
+        setMessages(prev => [...prev, { role: 'model', text: responseText }]);
+      }
+      
+    } catch (e: any) {
+      console.error(e);
+      setMessages(prev => [...prev, { role: 'model', text: `Error: ${e.message}` }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRetry = (index: number) => {
+      const previousUserMsg = messages[index - 1];
+      if (previousUserMsg && previousUserMsg.role === 'user') {
+          setMessages(prev => prev.slice(0, index - 1)); 
+          if (historyRef.current.length >= 2) {
+              historyRef.current.pop(); 
+              historyRef.current.pop(); 
+          }
+          handleSend(previousUserMsg.text, previousUserMsg.image);
+      }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+      navigator.clipboard.writeText(text);
+  };
+
+  if (showSettings) {
+      // ... (Settings UI condensed for brevity)
+      return (
+          <div className="flex flex-col h-full bg-lrgex-bg p-4 overflow-y-auto custom-scrollbar">
+              <div className="flex justify-between items-center mb-4 border-b border-lrgex-border pb-2">
+                  <h3 className="font-bold text-lrgex-text flex items-center gap-2"><Settings size={16}/> AI Settings</h3>
+                  <button onClick={() => setShowSettings(false)} className="text-lrgex-muted hover:text-lrgex-text">Done</button>
+              </div>
+
+              <div className="space-y-4 pb-10">
+                  <div>
+                      <label className="block text-xs text-lrgex-muted mb-2">Provider</label>
+                      <div className="grid grid-cols-2 gap-2">
+                          {['GEMINI', 'OPENROUTER', 'OPENAI', 'OLLAMA'].map(p => (
+                             <button 
+                                key={p}
+                                onClick={() => onUpdateSettings({ ...settings, provider: p as any })}
+                                className={`py-2 rounded text-[10px] font-bold border transition-all ${settings.provider === p ? 'bg-lrgex-orange border-lrgex-orange text-white' : 'bg-lrgex-panel border-lrgex-border text-lrgex-muted hover:border-lrgex-muted'}`}
+                             >
+                                 {p}
+                             </button>
+                          ))}
+                      </div>
+                  </div>
+
+                  {settings.provider === 'GEMINI' && (
+                       <div className="space-y-2 animate-in fade-in">
+                            <div>
+                                <label className="block text-xs text-lrgex-muted mb-1">Gemini API Key</label>
+                                <input 
+                                    type="password"
+                                    className="w-full bg-lrgex-panel border border-lrgex-border rounded px-2 py-1 text-sm text-lrgex-text focus:border-lrgex-orange outline-none"
+                                    value={settings.geminiKey}
+                                    onChange={e => onUpdateSettings({...settings, geminiKey: e.target.value})}
+                                    placeholder="AIzaSy..."
+                                />
+                            </div>
+                       </div>
+                  )}
+
+                  {settings.provider === 'OPENROUTER' && (
+                       <div className="space-y-2 animate-in fade-in">
+                            <div>
+                                <label className="block text-xs text-lrgex-muted mb-1">OpenRouter Key</label>
+                                <input 
+                                    type="password"
+                                    className="w-full bg-lrgex-panel border border-lrgex-border rounded px-2 py-1 text-sm text-lrgex-text focus:border-lrgex-orange outline-none"
+                                    value={settings.openRouterKey}
+                                    onChange={e => onUpdateSettings({...settings, openRouterKey: e.target.value})}
+                                    placeholder="sk-or-..."
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-lrgex-muted mb-1">Model ID</label>
+                                <input 
+                                    className="w-full bg-lrgex-panel border border-lrgex-border rounded px-2 py-1 text-sm text-lrgex-text focus:border-lrgex-orange outline-none"
+                                    value={settings.openRouterModel}
+                                    onChange={e => onUpdateSettings({...settings, openRouterModel: e.target.value})}
+                                    placeholder="x-ai/grok-4.1-fast"
+                                />
+                            </div>
+                       </div>
+                  )}
+
+                  {settings.provider === 'OPENAI' && (
+                       <div className="space-y-2 animate-in fade-in">
+                            <div>
+                                <label className="block text-xs text-lrgex-muted mb-1">API Key (Optional if using custom URL)</label>
+                                <input 
+                                    type="password"
+                                    className="w-full bg-lrgex-panel border border-lrgex-border rounded px-2 py-1 text-sm text-lrgex-text focus:border-lrgex-orange outline-none"
+                                    value={settings.openAiKey}
+                                    onChange={e => onUpdateSettings({...settings, openAiKey: e.target.value})}
+                                    placeholder="sk-..."
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-lrgex-muted mb-1">Model ID</label>
+                                <input 
+                                    className="w-full bg-lrgex-panel border border-lrgex-border rounded px-2 py-1 text-sm text-lrgex-text focus:border-lrgex-orange outline-none"
+                                    value={settings.openAiModel}
+                                    onChange={e => onUpdateSettings({...settings, openAiModel: e.target.value})}
+                                    placeholder="gpt-4o"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-lrgex-muted mb-1">API Endpoint (Optional)</label>
+                                <input 
+                                    className="w-full bg-lrgex-panel border border-lrgex-border rounded px-2 py-1 text-sm text-lrgex-text focus:border-lrgex-orange outline-none placeholder:text-lrgex-muted/20"
+                                    value={settings.openAiUrl}
+                                    onChange={e => onUpdateSettings({...settings, openAiUrl: e.target.value})}
+                                    placeholder="https://api.openai.com/v1/chat/completions"
+                                />
+                            </div>
+                       </div>
+                  )}
+
+                  {settings.provider === 'OLLAMA' && (
+                       <div className="space-y-2 animate-in fade-in">
+                            <div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-300">
+                                Note: Ensure Ollama is running with <code>OLLAMA_ORIGINS="*"</code> to allow browser access.
+                            </div>
+                            <div>
+                                <label className="block text-xs text-lrgex-muted mb-1">Ollama URL</label>
+                                <input 
+                                    className="w-full bg-lrgex-panel border border-lrgex-border rounded px-2 py-1 text-sm text-lrgex-text focus:border-lrgex-orange outline-none"
+                                    value={settings.ollamaUrl}
+                                    onChange={e => onUpdateSettings({...settings, ollamaUrl: e.target.value})}
+                                    placeholder="http://localhost:11434"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-lrgex-muted mb-1">Model Name</label>
+                                <input 
+                                    className="w-full bg-lrgex-panel border border-lrgex-border rounded px-2 py-1 text-sm text-lrgex-text focus:border-lrgex-orange outline-none"
+                                    value={settings.ollamaModel}
+                                    onChange={e => onUpdateSettings({...settings, ollamaModel: e.target.value})}
+                                    placeholder="llama3"
+                                />
+                            </div>
+                       </div>
+                  )}
+              </div>
+          </div>
+      )
+  }
+
+  return (
+    <div className="flex flex-col h-full w-full min-h-0 bg-lrgex-panel/30">
+      {/* Header Area */}
+      <div className="flex items-center justify-between px-3 py-3 border-b border-lrgex-border shrink-0 bg-lrgex-menu/50">
+        <div className="flex items-center gap-2">
+            {settings.mode === 'COMMANDER' ? (
+                 <ShieldAlert size={14} className="text-lrgex-orange" />
+            ) : (
+                 <Bot size={14} className="text-emerald-400" />
+            )}
+            <span className="text-xs font-medium text-lrgex-text">
+                {settings.mode === 'COMMANDER' ? 'AI Commander' : 'AI Assistant'}
+            </span>
+        </div>
+        <div className="flex gap-2">
+             <button 
+                onClick={clearChat}
+                className="text-lrgex-muted hover:text-red-400 p-0.5"
+                title="Clear Chat History"
+            >
+                <Trash2 size={14} />
+            </button>
+            <button 
+                onClick={() => onUpdateSettings({...settings, mode: settings.mode === 'COMMANDER' ? 'ASSISTANT' : 'COMMANDER'})}
+                className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${settings.mode === 'COMMANDER' ? 'bg-lrgex-orange/20 border-lrgex-orange text-lrgex-orange' : 'bg-emerald-500/20 border-emerald-500 text-emerald-300'}`}
+                title={settings.mode === 'COMMANDER' ? "Switch to Safe Mode" : "Switch to Admin Mode"}
+            >
+                {settings.mode}
+            </button>
+            <button onClick={() => setShowSettings(true)} className="text-lrgex-muted hover:text-lrgex-text">
+                <Settings size={14} />
+            </button>
+        </div>
+      </div>
+
+      {/* Chat Area */}
+      <div className="flex-1 overflow-y-auto space-y-4 p-3 custom-scrollbar min-h-0">
+        {messages.length === 0 && (
+            <div className="text-center text-lrgex-muted text-sm mt-8 px-4">
+                <Cpu className="mx-auto mb-3 opacity-50 text-lrgex-orange" size={32} />
+                <p className="mb-2">
+                    Running on <span className="font-semibold text-lrgex-text">{settings.provider}</span>
+                </p>
+                {settings.mode === 'COMMANDER' ? (
+                    <div className="p-2 bg-lrgex-orange/10 border border-lrgex-orange/30 rounded text-xs text-lrgex-orange">
+                        Warning: Commander mode is active.
+                    </div>
+                ) : (
+                    <p className="text-xs opacity-70">I can help with coding and questions.</p>
+                )}
+            </div>
+        )}
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''} group`}>
+             {msg.role !== 'system' && (
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-lrgex-orange' : 'bg-lrgex-hover border border-lrgex-border'}`}>
+                    {msg.role === 'user' ? <User size={12} className="text-white"/> : <Bot size={12} className="text-lrgex-text"/>}
+                </div>
+             )}
+            <div className={`rounded-lg p-2 text-xs max-w-[85%] flex flex-col gap-2 ${
+                msg.role === 'user' ? 'bg-lrgex-orange text-white' : 
+                msg.role === 'system' ? 'bg-red-500/10 text-red-200 w-full text-center italic border border-red-500/20' :
+                'bg-lrgex-menu text-lrgex-text border border-lrgex-border relative'}`}>
+              
+              {msg.image && (
+                  <img src={msg.image} alt="Attachment" className="rounded-md max-h-40 object-contain bg-black/20" />
+              )}
+              
+              {msg.role === 'model' ? (
+                  <MarkdownRenderer content={msg.text} />
+              ) : (
+                  <div className="whitespace-pre-wrap">{msg.text}</div>
+              )}
+
+              {msg.role === 'model' && (
+                  <div className="flex justify-end gap-2 pt-1 mt-1 border-t border-lrgex-border/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={() => copyToClipboard(msg.text)} 
+                        className="p-1 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-white transition-colors"
+                        title="Copy Text"
+                      >
+                          <Copy size={10} />
+                      </button>
+                      <button 
+                        onClick={() => handleRetry(i)} 
+                        className="p-1 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-white transition-colors"
+                        title="Retry"
+                      >
+                          <RotateCcw size={10} />
+                      </button>
+                  </div>
+              )}
+            </div>
+          </div>
+        ))}
+        {isLoading && (
+           <div className="flex gap-2">
+              <div className="w-6 h-6 rounded-full bg-lrgex-hover border border-lrgex-border flex items-center justify-center shrink-0">
+                <Loader2 size={12} className="animate-spin text-lrgex-muted" />
+              </div>
+              <div className="bg-lrgex-menu border border-lrgex-border rounded-lg p-2 flex items-center">
+                <span className="text-xs text-lrgex-muted">Processing...</span>
+              </div>
+           </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input Area */}
+      <div className="p-3 bg-lrgex-menu/50 border-t border-lrgex-border shrink-0">
+        {pendingImage && (
+            <div className="mb-2 flex items-center gap-2 p-2 bg-lrgex-panel border border-lrgex-border rounded-lg w-fit">
+                <img src={pendingImage} alt="Preview" className="w-8 h-8 object-cover rounded" />
+                <span className="text-[10px] text-lrgex-muted">Image attached</span>
+                <button onClick={() => setPendingImage(null)} className="ml-2 text-lrgex-muted hover:text-red-400">
+                    <X size={12} />
+                </button>
+            </div>
+        )}
+
+        <div className="flex items-center gap-2 bg-lrgex-menu p-1 rounded-lg border border-lrgex-border">
+            <label className="cursor-pointer p-1.5 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-lrgex-orange transition-colors">
+                <Paperclip size={14} />
+                <input 
+                    type="file" 
+                    accept="image/*" 
+                    className="hidden" 
+                    ref={fileInputRef}
+                    onChange={handleImageUpload}
+                />
+            </label>
+
+            <input
+                className="flex-1 bg-transparent border-none focus:ring-0 text-sm px-2 py-1 text-lrgex-text placeholder-lrgex-muted outline-none"
+                placeholder={settings.mode === 'COMMANDER' ? "e.g., 'Add calculator widget...'" : "Paste image or ask..."}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+            />
+            <button 
+                onClick={() => handleSend()} 
+                disabled={isLoading || (!input.trim() && !pendingImage)}
+                className="p-1.5 bg-lrgex-orange rounded-md text-white disabled:opacity-50 hover:bg-orange-600 transition-colors"
+            >
+            <Send size={14} />
+            </button>
+        </div>
+      </div>
+    </div>
+  );
+};

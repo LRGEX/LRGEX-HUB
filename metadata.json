@@ -1,0 +1,5 @@
+{
+  "name": "LRGEX HUB",
+  "description": "A modern, customizable home lab homepage with widgets for Proxmox, SABnzbd, and AI assistance.",
+  "requestFramePermissions": []
+}

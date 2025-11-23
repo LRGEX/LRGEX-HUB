@@ -1,0 +1,125 @@
+
+export enum WidgetType {
+  CLOCK = 'CLOCK',
+  UNIVERSAL = 'UNIVERSAL', // Replaces hardcoded Proxmox/Sabnzbd with generic fetcher
+  AI = 'AI',
+  WEATHER = 'WEATHER',
+  PROXMOX = 'PROXMOX',
+  SABNZBD = 'SABNZBD'
+}
+
+export type AiProvider = 'GEMINI' | 'OPENROUTER' | 'OPENAI' | 'OLLAMA';
+export type AiMode = 'COMMANDER' | 'ASSISTANT';
+
+export interface AiSettings {
+  provider: AiProvider;
+  mode: AiMode;
+  
+  // Provider Configs
+  geminiKey: string;
+  
+  openRouterKey: string;
+  openRouterModel: string;
+  
+  openAiKey: string;
+  openAiModel: string;
+  openAiUrl: string; // Custom Base URL (optional)
+  
+  ollamaUrl: string;
+  ollamaModel: string;
+}
+
+export interface UniversalWidgetConfig {
+  endpoint: string;
+  method: 'GET' | 'POST';
+  headers?: Record<string, string>;
+  jsonPath: string; // path to data e.g. "data.stats.cpu_usage"
+  refreshInterval: number;
+  label: string;
+  unit?: string;
+  icon?: string;
+  customCode?: string; // Valid Javascript code for React component body
+}
+
+export interface WidgetTemplate {
+  id: string;
+  name: string;
+  config: UniversalWidgetConfig;
+}
+
+export interface WidgetConfig {
+  id: string;
+  type: WidgetType;
+  title?: string;
+  w?: number;
+  h?: number;
+  config?: UniversalWidgetConfig; // Store specific config here
+}
+
+export interface LinkItem {
+  id: string;
+  title: string;
+  url: string;
+  iconUrl?: string;
+}
+
+export interface LinkCategory {
+  id: string;
+  title: string;
+  iconUrl?: string;
+  links: LinkItem[];
+  w?: number;
+  h?: number;
+}
+
+export interface GeneralSettings {
+  timezone: string;
+  aiSidebarOpen: boolean;
+  layoutAlign: 'start' | 'center' | 'end';
+}
+
+export type BackupInterval = 'HOURLY' | 'DAILY' | 'WEEKLY';
+
+export interface BackupSettings {
+    enabled: boolean;
+    schedule: BackupInterval;
+    lastBackupAt: number | null;
+}
+
+export interface AppData {
+  widgets: WidgetConfig[];
+  categories: LinkCategory[];
+  aiSettings: AiSettings;
+  templates: WidgetTemplate[];
+  generalSettings: GeneralSettings;
+  backupSettings: BackupSettings;
+  sectionOrder: string[]; // 'widgets' | 'bookmarks'
+}
+
+export interface ChatMessage {
+  role: 'user' | 'model' | 'system';
+  text: string;
+  image?: string; // Base64 Data URI
+}
+
+export interface ProxmoxNode {
+  name: string;
+  status: string;
+}
+
+export interface ProxmoxData {
+  cpuUsage: number;
+  ramUsage: number;
+  ramTotal: number;
+  uptime: string;
+  nodes: ProxmoxNode[];
+}
+
+export interface DownloadClientData {
+  status: string;
+  speed: string;
+  timeLeft: string;
+  queueSize: string;
+  currentFile: string;
+  progress: number;
+}
