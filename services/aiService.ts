@@ -72,42 +72,66 @@ const getSystemPrompt = (settings: AiSettings) => {
          1. **Standard Widget**: If user wants to display data from an API, use 'endpoint' and 'jsonPath'.
          2. **Custom Widget (Playground)**: If user wants a custom UI (calculator, clock, interactive tool, or specific visualization), use 'customCode'.
          
-         RULES FOR CUSTOM CODE:
-         - You are writing the BODY of a React functional component.
+         RULES FOR CUSTOM CODE (React.createElement):
+         - You are writing the **BODY** of a React functional component.
          - **NO JSX**. Browsers cannot run JSX. You MUST use \`React.createElement(type, props, ...children)\`.
          - Available Globals: \`React\`, \`useState\`, \`useEffect\`, \`useRef\`, \`Lucide\` (contains all Lucide icons).
          - **RESPONSIVENESS IS CRITICAL**: 
-           - The widget container size varies (1x1, 3x2, 4x1).
-           - You receive \`props.width\` and \`props.height\` (numbers in pixels). USE THEM.
+           - The widget container size varies. You receive \`props.width\` and \`props.height\`.
            - Always use \`className: 'w-full h-full'\` for the root element.
-           - Use Flexbox/Grid to center content or distribute space.
-           - Example: If \`props.height < 100\`, hide detailed charts or large text.
-           - Ensure text scales or wraps correctly so no clipping occurs.
-         - **PERSISTENT STATE (Config)**:
-           - Standard \`useState\` resets on reload.
-           - To store settings (API Keys, URLs, Colors) that persist across reloads, use \`props.customData\` (object) and \`props.setCustomData(newObj)\`.
-           - Example: \`const apiKey = props.customData.apiKey || '';\`
-           - Update: \`props.setCustomData({ ...props.customData, apiKey: 'new_key' });\`
-           - If you create a configuration form inside the widget, bind inputs to \`props.customData\`.
-         - Example Return: \`return React.createElement('div', { className: 'w-full h-full flex items-center justify-center bg-slate-900 text-white' }, \`Size: \${Math.round(props.width)}x\${Math.round(props.height)}\`);\`
+           - Use Flexbox/Grid to center content.
          
-         RULES FOR WEB APPS (NEW):
-         - Use 'addWebApp' when the user wants to add a service (e.g. Portainer, Plex).
-         - **BULK CREATION MANDATE**: If the user provides a list of multiple apps (e.g. "App Name: X, URL: Y... App Name: A, URL: B..."), you MUST call \`addWebApp\` separately for **EVERY SINGLE APP**. Do NOT summarize. Do NOT skip any.
-         - **Smart Inference**: If user gives "IP:Port" (e.g. "192.168.1.5:8989"):
-           1. **URL**: Automatically prepend 'http://' to IP addresses if missing.
-           2. **Category**: 
-              - CHECK EXISTING CATEGORIES FIRST. If the user asks for "Jellyfin", and "Media" category exists, use "Media". Do NOT create "Media Server" or "Media Tools" if "Media" covers it.
-              - **Prioritize Broad Categories**: Docker, Media, Network, Security, Home, Downloads, Monitoring, Productivity, AI.
-              - Avoid sub-categories unless strictly necessary.
-           3. **Icon**: Generate a CDN URL: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/{app-name-lowercase-kebab-case}.png".
-              - Example: "Home Assistant" -> "home-assistant.png"
-           4. **Description**: Generate a very short 4-5 word description (e.g. "Media Management" or "Docker Container GUI") if one isn't provided.
+         **CRITICAL: CONFIGURATION PERSISTENCE**:
+         - Standard \`useState\` is volatile and resets on page reload.
+         - **For Configuration (API Keys, URLs, Usernames)**: YOU MUST USE \`props.customData\` and \`props.setCustomData\`.
+         - **DO NOT** store config in \`useState\`.
+         
+         **MANDATORY CODE PATTERN FOR CONFIGURABLE WIDGETS**:
+         \`\`\`javascript
+         // 1. Read Config from Props
+         const config = props.customData || {};
+         const [error, setError] = useState('');
+         
+         // 2. Save Function
+         const saveConfig = (newSettings) => {
+            props.setCustomData({ ...config, ...newSettings });
+         };
+
+         // 3. Render Config Form if missing data
+         if (!config.url || !config.apiKey) {
+            return React.createElement('div', { className: 'p-4 space-y-2' },
+               React.createElement('h3', { className: 'text-white' }, 'Configure Widget'),
+               React.createElement('input', { 
+                  placeholder: 'API URL',
+                  className: 'w-full p-1 text-black',
+                  defaultValue: config.url || '',
+                  onBlur: (e) => saveConfig({ url: e.target.value }) 
+               }),
+               React.createElement('input', { 
+                  placeholder: 'API Key',
+                  type: 'password',
+                  className: 'w-full p-1 text-black',
+                  defaultValue: config.apiKey || '',
+                  onBlur: (e) => saveConfig({ apiKey: e.target.value }) 
+               })
+            );
+         }
+
+         // 4. Render Main Widget (using config.url, config.apiKey)
+         // ... fetch logic using config.url ...
+         \`\`\`
+         
+         RULES FOR WEB APPS:
+         - Use 'addWebApp' for services.
+         - **BULK CREATION**: Call \`addWebApp\` for **EVERY** app in a list. Do not summarize.
+         - **Smart Inference**:
+           1. Prepend 'http://' to IPs.
+           2. Use existing categories if possible (e.g. "Media" instead of "Media Server").
+           3. Generate CDN icons: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/{name}.png".
 
          RULES FOR BOOKMARKS:
-         - Use 'addBookmark' for simple link lists.
-         - Categorize Intelligently.
-         - Generate Icons using the same CDN pattern as Web Apps.
+         - Use 'addBookmark'.
+         - Generate icons using the CDN pattern.
          
          Output tool calls in the native format of the provider.`
       : "You are the LRGEX AI Assistant. You cannot modify the dashboard.";

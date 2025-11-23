@@ -1,3 +1,4 @@
+
 import React, { Component, useEffect, useState, useRef, useMemo, ReactNode } from 'react';
 import * as LucideIcons from 'lucide-react';
 import { AlertTriangle, Bot } from 'lucide-react';
@@ -20,7 +21,7 @@ interface ErrorBoundaryState {
 }
 
 // Error Boundary Component to prevent whole app crashes
-class WidgetErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class WidgetErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
     constructor(props: ErrorBoundaryProps) {
         super(props);
         this.state = {
@@ -147,7 +148,7 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, custom
                     <GeneratedComponent 
                         width={dimensions.width} 
                         height={dimensions.height} 
-                        customData={customData}
+                        customData={customData || {}}
                         setCustomData={onSetCustomData}
                     />
                 </WidgetErrorBoundary>
