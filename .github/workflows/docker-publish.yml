@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - 'ground/**'
+      - improvements
     tags:
       - 'v*'
 
