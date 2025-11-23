@@ -4,6 +4,8 @@ import { AlertTriangle, Bot } from 'lucide-react';
 
 interface CustomCodeWidgetProps {
     code: string;
+    customData: Record<string, any>;
+    onSetCustomData: (data: Record<string, any>) => void;
     onReportError?: (error: string) => void;
 }
 
@@ -37,15 +39,16 @@ class WidgetErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
 
     render() {
         if (this.state.hasError) {
+            const { onReportError } = this.props;
             return (
                 <div className="p-2 text-red-400 text-xs border border-red-500/20 bg-red-500/10 rounded h-full overflow-auto flex flex-col gap-2">
                     <div>
                         <strong>Render Error:</strong>
                         <pre className="mt-1 whitespace-pre-wrap">{this.state.errorMsg}</pre>
                     </div>
-                    {this.props.onReportError && (
+                    {onReportError && (
                         <button 
-                            onClick={() => this.props.onReportError?.(this.state.errorMsg)}
+                            onClick={() => onReportError(this.state.errorMsg)}
                             className="flex items-center gap-1 bg-lrgex-orange text-white px-2 py-1 rounded text-[10px] w-fit hover:bg-orange-600 transition-colors"
                         >
                             <Bot size={12} /> Fix with AI
@@ -58,7 +61,7 @@ class WidgetErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
     }
 }
 
-export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, onReportError }) => {
+export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customData, onSetCustomData, onReportError }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
@@ -92,7 +95,7 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, onRepo
                 'useState', 
                 'useEffect', 
                 'useRef', 
-                'Lucide',
+                'Lucide', 
                 'props',
                 code
             );
@@ -141,7 +144,12 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, onRepo
              {/* Only render if we have dimensions to prevent initial 0-size glitches */}
              {dimensions.width > 0 && (
                 <WidgetErrorBoundary onReportError={onReportError}>
-                    <GeneratedComponent width={dimensions.width} height={dimensions.height} />
+                    <GeneratedComponent 
+                        width={dimensions.width} 
+                        height={dimensions.height} 
+                        customData={customData}
+                        setCustomData={onSetCustomData}
+                    />
                 </WidgetErrorBoundary>
              )}
         </div>

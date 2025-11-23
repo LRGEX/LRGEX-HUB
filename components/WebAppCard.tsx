@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { ExternalLink, Edit2, Trash2 } from 'lucide-react';
+import { ExternalLink, Edit2, Trash2, GripHorizontal } from 'lucide-react';
 import { WebApp } from '../types';
 
 interface WebAppCardProps {
@@ -8,11 +8,39 @@ interface WebAppCardProps {
     editMode: boolean;
     onEdit: (app: WebApp) => void;
     onDelete: (id: string) => void;
+    onDragStart?: (e: React.DragEvent, id: string) => void;
+    onDrop?: (e: React.DragEvent, targetId: string) => void;
 }
 
-export const WebAppCard: React.FC<WebAppCardProps> = ({ app, editMode, onEdit, onDelete }) => {
+export const WebAppCard: React.FC<WebAppCardProps> = ({ app, editMode, onEdit, onDelete, onDragStart, onDrop }) => {
+    
+    const handleDragStart = (e: React.DragEvent) => {
+        if (editMode && onDragStart) {
+            onDragStart(e, app.id);
+        }
+    };
+
+    const handleDragOver = (e: React.DragEvent) => {
+        if (editMode && onDrop) {
+            e.preventDefault(); // Necessary to allow dropping
+        }
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        if (editMode && onDrop) {
+            e.preventDefault();
+            onDrop(e, app.id);
+        }
+    };
+
     return (
-        <div className="bg-lrgex-panel border border-lrgex-border rounded-xl p-4 flex flex-col gap-3 group hover:border-lrgex-hover transition-all relative overflow-hidden h-full">
+        <div 
+            draggable={editMode}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            className={`bg-lrgex-panel border border-lrgex-border rounded-xl p-4 flex flex-col gap-3 group hover:border-lrgex-hover transition-all relative overflow-hidden h-full ${editMode ? 'cursor-move' : ''}`}
+        >
             {editMode && (
                 <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 bg-black/50 rounded-lg p-1 backdrop-blur-sm">
                     <button onClick={() => onEdit(app)} className="p-1 text-lrgex-muted hover:text-white hover:bg-lrgex-hover rounded">
@@ -21,6 +49,12 @@ export const WebAppCard: React.FC<WebAppCardProps> = ({ app, editMode, onEdit, o
                     <button onClick={() => onDelete(app.id)} className="p-1 text-lrgex-muted hover:text-red-400 hover:bg-lrgex-hover rounded">
                         <Trash2 size={14} />
                     </button>
+                </div>
+            )}
+            
+            {editMode && (
+                <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-50 pointer-events-none">
+                     <GripHorizontal size={14} className="text-lrgex-muted" />
                 </div>
             )}
 
@@ -35,7 +69,7 @@ export const WebAppCard: React.FC<WebAppCardProps> = ({ app, editMode, onEdit, o
                     </div>
                     <div>
                         <h3 className="font-bold text-white text-base leading-tight truncate max-w-[150px]" title={app.name}>{app.name}</h3>
-                        <p className="text-[10px] text-lrgex-muted">{app.name}</p>
+                        {/* Removed redundant app name text here */}
                     </div>
                 </div>
                 <div className="px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-[10px] font-bold text-blue-300">

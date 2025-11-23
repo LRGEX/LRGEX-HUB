@@ -136,14 +136,18 @@ export const BackupModal: React.FC<BackupModalProps> = ({ isOpen, onClose, data,
                                 <p className="text-sm text-lrgex-muted">This will overwrite your current configuration.</p>
                              </div>
 
-                             <div className="grid grid-cols-2 gap-4">
+                             <div className="grid grid-cols-3 gap-4">
                                  <div className="bg-lrgex-bg p-3 rounded-lg border border-lrgex-border">
                                      <div className="text-xs text-lrgex-muted uppercase">Widgets</div>
-                                     <div className="text-xl font-bold text-white">{pendingData.widgets.length}</div>
+                                     <div className="text-xl font-bold text-white">{pendingData.widgets?.length || 0}</div>
                                  </div>
                                  <div className="bg-lrgex-bg p-3 rounded-lg border border-lrgex-border">
                                      <div className="text-xs text-lrgex-muted uppercase">Categories</div>
-                                     <div className="text-xl font-bold text-white">{pendingData.categories.length}</div>
+                                     <div className="text-xl font-bold text-white">{pendingData.categories?.length || 0}</div>
+                                 </div>
+                                 <div className="bg-lrgex-bg p-3 rounded-lg border border-lrgex-border">
+                                     <div className="text-xs text-lrgex-muted uppercase">Web Apps</div>
+                                     <div className="text-xl font-bold text-white">{(pendingData.webApps || []).length}</div>
                                  </div>
                              </div>
 

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { WidgetWrapper } from './components/WidgetWrapper';
 import { UniversalWidget } from './components/widgets/UniversalWidget';
@@ -11,7 +12,7 @@ import { WebAppCard } from './components/WebAppCard';
 import { WebAppModal } from './components/WebAppModal';
 import { AppData, WidgetType, WidgetConfig, LinkItem, UniversalWidgetConfig, AiSettings, WidgetTemplate, GeneralSettings, BackupSettings, WebApp } from './types';
 import { saveBackupToServer } from './services/backupService';
-import { Settings, Check, FolderPlus, X, LayoutTemplate, Trash2, Bot, Save, Clock, Cloud, Database, PanelRightClose, PanelRightOpen, GripVertical, AlignLeft, AlignCenter, AlignRight, Eye, EyeOff, Plus, Search, AppWindow } from 'lucide-react';
+import { Settings, Check, FolderPlus, X, LayoutTemplate, Trash2, Bot, Save, Clock, Cloud, Database, PanelRightClose, PanelRightOpen, GripVertical, GripHorizontal, AlignLeft, AlignCenter, AlignRight, Eye, EyeOff, Plus, Search, AppWindow, FolderMinus, Star, Minus, Columns } from 'lucide-react';
 
 // Helper for generating unique IDs
 const generateUUID = () => {
@@ -60,7 +61,8 @@ const DEFAULT_DATA: AppData = {
   generalSettings: {
     timezone: getBrowserTimezone(),
     aiSidebarOpen: true,
-    layoutAlign: 'center'
+    layoutAlign: 'center',
+    defaultWebAppTab: 'All'
   },
   backupSettings: DEFAULT_BACKUP_SETTINGS,
   sectionOrder: ['webApps', 'widgets', 'bookmarks'],
@@ -133,6 +135,7 @@ const App: React.FC = () => {
   const [webAppSearch, setWebAppSearch] = useState('');
   const [showWebAppModal, setShowWebAppModal] = useState(false);
   const [editingWebApp, setEditingWebApp] = useState<WebApp | undefined>(undefined);
+  const [confirmDeleteWebAppCat, setConfirmDeleteWebAppCat] = useState<string | null>(null);
 
   // Drag state for sections
   const [draggedSection, setDraggedSection] = useState<string | null>(null);
@@ -243,6 +246,7 @@ const App: React.FC = () => {
                 };
                 setData(loadedData);
                 setSidebarOpen(loadedData.generalSettings.aiSidebarOpen);
+                setActiveWebAppTab(loadedData.generalSettings.defaultWebAppTab || 'All');
             }
         } catch (e) {
             console.error("Failed to load config from server. Using defaults.", e);
@@ -491,10 +495,10 @@ const App: React.FC = () => {
               ...prev,
               categories: prev.categories.map(c => {
                   if (c.id === sourceCatId) {
-                      return { ...c, links: c.links.filter(l => l.id !== linkId) };
+                      return { ...c, links: c.links.filter(l => l.id !== linkId) }
                   }
                   if (c.id === targetCatId) {
-                      return { ...c, links: [...c.links, link] };
+                      return { ...c, links: [...c.links, link] }
                   }
                   return c;
               })
@@ -518,6 +522,56 @@ const App: React.FC = () => {
 
   const deleteWebApp = (id: string) => {
       setData(prev => ({ ...prev, webApps: prev.webApps.filter(a => a.id !== id) }));
+  };
+
+  const moveWebApp = (draggedId: string, targetId: string) => {
+    setData(prev => {
+        const dragIndex = prev.webApps.findIndex(a => a.id === draggedId);
+        const targetIndex = prev.webApps.findIndex(a => a.id === targetId);
+
+        if (dragIndex === -1 || targetIndex === -1 || dragIndex === targetIndex) return prev;
+
+        const newApps = [...prev.webApps];
+        const [draggedItem] = newApps.splice(dragIndex, 1);
+        newApps.splice(targetIndex, 0, draggedItem);
+        
+        return { ...prev, webApps: newApps };
+    });
+  };
+
+  const addWebAppSeparator = (type: 'HORIZONTAL' | 'VERTICAL') => {
+      const newSeparator: WebApp = {
+          id: generateUUID(),
+          type: 'SEPARATOR',
+          separatorType: type,
+          name: 'Separator',
+          url: '#',
+          category: activeWebAppTab !== 'All' ? activeWebAppTab : 'Other',
+          iconUrl: ''
+      };
+      setData(prev => ({
+          ...prev,
+          webApps: [...prev.webApps, newSeparator]
+      }));
+  };
+
+  const deleteWebAppCategory = (category: string) => {
+    setData(prev => ({
+        ...prev,
+        // Move apps to 'Other' instead of deleting
+        webApps: prev.webApps.map(a => 
+            a.category === category ? { ...a, category: 'Other' } : a
+        )
+    }));
+    setActiveWebAppTab('All');
+    setConfirmDeleteWebAppCat(null);
+  };
+
+  const setDefaultWebAppTab = (tab: string) => {
+      setData(prev => ({
+          ...prev,
+          generalSettings: { ...prev.generalSettings, defaultWebAppTab: tab }
+      }));
   };
 
   const updateAiSettings = (settings: AiSettings) => {
@@ -627,35 +681,42 @@ const App: React.FC = () => {
   };
 
   const addWebAppRef = useRef((args: { name: string; url: string; description?: string; category: string; iconUrl?: string }) => {
-      setData(prev => ({
-          ...prev,
-          webApps: [...prev.webApps, {
-              id: generateUUID(),
-              name: args.name,
-              url: args.url,
-              description: args.description,
-              category: args.category,
-              iconUrl: args.iconUrl
-          }]
-      }));
-  });
-  
-  useEffect(() => {
-      addWebAppRef.current = (args) => {
-        setData(prev => ({
+      setData(prev => {
+          // Smart Category Matching
+          // Explicitly type the array to avoid 'unknown' inference
+          const currentCategories: string[] = Array.from(new Set(prev.webApps.map(a => a.category)));
+          let targetCategory = args.category;
+          const normalizedTarget = targetCategory.toLowerCase().trim();
+
+          // 1. Check for exact match (case-insensitive)
+          const exactMatch = currentCategories.find((c: string) => c.toLowerCase() === normalizedTarget);
+          if (exactMatch) {
+              targetCategory = exactMatch;
+          } else {
+              // 2. Check if requested category contains an existing one (e.g. "Productivity/Other" -> "Productivity")
+              const partialMatch = currentCategories.find((c: string) => normalizedTarget.includes(c.toLowerCase()));
+              if (partialMatch) {
+                  targetCategory = partialMatch;
+              }
+          }
+
+          return {
             ...prev,
             webApps: [...prev.webApps, {
                 id: generateUUID(),
+                type: 'APP',
                 name: args.name,
                 url: args.url,
                 description: args.description,
-                category: args.category,
+                category: targetCategory,
                 iconUrl: args.iconUrl
             }]
-        }));
-      };
-  }, []);
-
+          };
+      });
+  });
+  
+  // Update the ref logic (though useRef for this is a bit tricky with stale closures, 
+  // but since we use the function form of setData inside, it's safe)
   const handleAiAddWebApp = (args: { name: string; url: string; description?: string; category: string; iconUrl?: string }) => {
      addWebAppRef.current(args);
   };
@@ -677,18 +738,23 @@ const App: React.FC = () => {
     }
   };
 
-  const getSizeClasses = (w: number = 1, h: number = 1, baseHeight: number = 180) => {
-    let widthClass = 'w-full';
-    if (w === 1) widthClass = 'w-full md:w-[calc(50%-0.75rem)] xl:w-[calc(25%-1.125rem)]';
-    if (w === 2) widthClass = 'w-full xl:w-[calc(50%-0.75rem)]';
-    if (w === 3) widthClass = 'w-full xl:w-[calc(75%-0.375rem)]';
-    if (w === 4) widthClass = 'w-full';
+  // NEW GRID LOGIC
+  // Instead of pixel widths/heights for Flexbox, we use Col/Row spans for CSS Grid
+  const getWidgetClasses = (w: number = 1, h: number = 1) => {
+    // Columns (Width)
+    // Mobile: Always full width (col-span-1 in a 1-col grid, or col-span-2 in 2-col, etc)
+    // We define grid-cols-1 (sm) -> 2 (md) -> 3 (lg) -> 4 (xl)
+    
+    let colSpan = 'col-span-1';
+    if (w === 2) colSpan = 'col-span-1 md:col-span-2';
+    if (w === 3) colSpan = 'col-span-1 md:col-span-2 lg:col-span-3';
+    if (w === 4) colSpan = 'col-span-1 md:col-span-2 lg:col-span-3 xl:col-span-4'; // Full row
 
-    const gap = 24;
-    const pxHeight = (h * baseHeight) + ((h - 1) * gap);
-    const heightClass = `h-[${pxHeight}px]`;
+    // Rows (Height)
+    // Using grid-auto-rows with row-span
+    const rowSpan = `row-span-${h}`;
 
-    return `${widthClass} ${heightClass}`;
+    return `${colSpan} ${rowSpan}`;
   };
 
   const LrgexLogo = () => (
@@ -708,16 +774,25 @@ const App: React.FC = () => {
   }).format(currentTime);
   const year = currentTime.getFullYear();
 
+  // Alignment classes for FLEXBOX web apps (these are cards)
   const alignClass = data.generalSettings.layoutAlign === 'center' ? 'justify-center' : data.generalSettings.layoutAlign === 'end' ? 'justify-end' : 'justify-start';
 
   const webAppCategories = useMemo(() => {
-      const cats = new Set(data.webApps.map(a => a.category));
+      // Filter out separators from category list logic
+      const cats = new Set(data.webApps.filter(a => a.type !== 'SEPARATOR').map(a => a.category));
       return Array.from(cats).sort();
   }, [data.webApps]);
 
   const filteredWebApps = useMemo(() => {
+      if (data.webApps.length === 0) return []; // Short circuit if empty
+
       return data.webApps.filter(app => {
+          // Separators should show if they match the tab OR if they are generic separators in 'All'
+          // For simplicity, we assign separators a category.
           const matchesTab = activeWebAppTab === 'All' || app.category === activeWebAppTab;
+          
+          if (app.type === 'SEPARATOR') return matchesTab;
+
           const matchesSearch = app.name.toLowerCase().includes(webAppSearch.toLowerCase()) || 
                                (app.description || '').toLowerCase().includes(webAppSearch.toLowerCase());
           return matchesTab && matchesSearch;
@@ -877,20 +952,65 @@ const App: React.FC = () => {
                                         </div>
 
                                         <div className="flex items-center gap-2 flex-wrap justify-end">
-                                            <div className="flex bg-lrgex-bg/30 p-1 rounded-lg border border-lrgex-border overflow-x-auto custom-scrollbar max-w-full">
+                                            <div className="flex bg-lrgex-bg/30 p-1 rounded-lg border border-lrgex-border overflow-x-auto custom-scrollbar max-w-full items-center">
                                                 {['All', ...webAppCategories].map(cat => (
-                                                    <button
-                                                        key={cat}
-                                                        onClick={() => setActiveWebAppTab(cat)}
-                                                        className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all whitespace-nowrap ${activeWebAppTab === cat ? 'bg-lrgex-text text-lrgex-bg shadow-sm' : 'text-lrgex-muted hover:text-lrgex-text hover:bg-lrgex-hover'}`}
-                                                    >
-                                                        {cat}
-                                                    </button>
+                                                    <div key={cat} className="relative group/tab">
+                                                        <button
+                                                            onClick={() => setActiveWebAppTab(cat)}
+                                                            className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all whitespace-nowrap flex items-center gap-1 ${activeWebAppTab === cat ? 'bg-lrgex-text text-lrgex-bg shadow-sm' : 'text-lrgex-muted hover:text-lrgex-text hover:bg-lrgex-hover'}`}
+                                                        >
+                                                            {cat}
+                                                            {editMode && data.generalSettings.defaultWebAppTab === cat && <Star size={10} className="fill-current" />}
+                                                        </button>
+                                                        {editMode && activeWebAppTab === cat && data.generalSettings.defaultWebAppTab !== cat && (
+                                                             <button 
+                                                                onClick={(e) => { e.stopPropagation(); setDefaultWebAppTab(cat); }}
+                                                                className="absolute -top-2 -right-1 text-lrgex-muted hover:text-lrgex-orange bg-lrgex-panel rounded-full p-0.5 shadow-sm opacity-0 group-hover/tab:opacity-100 transition-opacity"
+                                                                title="Set as Default Tab"
+                                                             >
+                                                                 <Star size={10} />
+                                                             </button>
+                                                        )}
+                                                    </div>
                                                 ))}
                                             </div>
 
+                                            {editMode && activeWebAppTab !== 'All' && (
+                                                <div className="flex items-center">
+                                                    {confirmDeleteWebAppCat === activeWebAppTab ? (
+                                                        <div className="flex gap-1 animate-in fade-in">
+                                                            <button 
+                                                                onClick={() => deleteWebAppCategory(activeWebAppTab)}
+                                                                className="text-xs bg-red-500 hover:bg-red-600 text-white px-2 py-1.5 rounded flex items-center"
+                                                            >
+                                                                Confirm?
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => setConfirmDeleteWebAppCat(null)}
+                                                                className="text-xs bg-lrgex-panel text-lrgex-muted hover:text-white px-2 py-1.5 rounded"
+                                                            >
+                                                                <X size={12}/>
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <button 
+                                                            onClick={() => setConfirmDeleteWebAppCat(activeWebAppTab)}
+                                                            className="text-xs bg-lrgex-panel border border-lrgex-border text-lrgex-muted hover:text-red-400 hover:border-red-400/50 px-2 py-1.5 rounded flex items-center gap-1 transition-colors"
+                                                            title={`Delete Category "${activeWebAppTab}" and all its apps`}
+                                                        >
+                                                            <FolderMinus size={14} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
+
                                             {editMode && (
                                                 <>
+                                                    <div className="flex bg-lrgex-panel border border-lrgex-border rounded-lg p-0.5 mx-1">
+                                                        <button onClick={() => addWebAppSeparator('HORIZONTAL')} className="p-1 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-white" title="Add Horizontal Separator"><Minus size={14}/></button>
+                                                        <button onClick={() => addWebAppSeparator('VERTICAL')} className="p-1 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-white" title="Add Vertical Separator"><Columns size={14}/></button>
+                                                    </div>
+
                                                     <button 
                                                         onClick={() => { setEditingWebApp(undefined); setShowWebAppModal(true); }}
                                                         className="text-xs bg-lrgex-orange hover:bg-orange-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors shadow-lg shadow-orange-900/20"
@@ -909,22 +1029,92 @@ const App: React.FC = () => {
                                         </div>
                                     </div>
                                     
-                                    <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 ${!isVisible ? 'pointer-events-none' : ''}`}>
-                                        {filteredWebApps.map(app => (
-                                            <div key={app.id} className="h-40">
-                                                <WebAppCard 
-                                                    app={app} 
-                                                    editMode={editMode}
-                                                    onEdit={(a) => { setEditingWebApp(a); setShowWebAppModal(true); }}
-                                                    onDelete={deleteWebApp}
-                                                />
-                                            </div>
-                                        ))}
-                                        {filteredWebApps.length === 0 && (
-                                            <div className="col-span-full text-center py-8 text-lrgex-muted/50 border border-dashed border-lrgex-border rounded-xl">
-                                                No apps found.
-                                            </div>
-                                        )}
+                                    {/* Auto Rows to allow separator to be small, but explicit card height */}
+                                    <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 grid-flow-dense ${!isVisible ? 'pointer-events-none' : ''}`}>
+                                        {filteredWebApps.map(app => {
+                                            if (app.type === 'SEPARATOR') {
+                                                return (
+                                                    <div 
+                                                        key={app.id} 
+                                                        draggable={editMode}
+                                                        onDragStart={(e) => {
+                                                            if (editMode) {
+                                                                e.dataTransfer.setData('webAppId', app.id);
+                                                                e.dataTransfer.effectAllowed = 'move';
+                                                            }
+                                                        }}
+                                                        onDragOver={(e) => editMode && e.preventDefault()}
+                                                        onDrop={(e) => {
+                                                            if (editMode) {
+                                                                e.preventDefault();
+                                                                const draggedId = e.dataTransfer.getData('webAppId');
+                                                                if (draggedId && draggedId !== app.id) moveWebApp(draggedId, app.id);
+                                                            }
+                                                        }}
+                                                        className={`relative group 
+                                                            ${app.separatorType === 'HORIZONTAL' 
+                                                                ? 'col-span-1 md:col-span-2 lg:col-span-3 xl:col-span-4 h-4 flex items-center justify-center my-2' 
+                                                                : 'h-[160px] flex items-center justify-center w-full' 
+                                                            }
+                                                            ${editMode ? 'cursor-move hover:bg-lrgex-panel/50 rounded' : ''}
+                                                        `}
+                                                    >
+                                                        {/* The Line */}
+                                                        {app.separatorType === 'HORIZONTAL' ? (
+                                                            <div className="w-full h-px bg-lrgex-border group-hover:bg-lrgex-orange/50 transition-colors relative">
+                                                                 {/* Grip Handle for easier target in edit mode */}
+                                                                 {editMode && (
+                                                                    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-lrgex-bg px-2 text-lrgex-muted">
+                                                                        <GripHorizontal size={12} />
+                                                                    </div>
+                                                                 )}
+                                                            </div>
+                                                        ) : (
+                                                            <div className={`h-full w-px transition-colors relative
+                                                                ${editMode ? 'bg-lrgex-border group-hover:bg-lrgex-orange/50' : 'bg-transparent'}
+                                                            `}>
+                                                                 {/* Grip Handle */}
+                                                                 {editMode && (
+                                                                    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-lrgex-bg py-1 text-lrgex-muted">
+                                                                        <GripVertical size={12} />
+                                                                    </div>
+                                                                 )}
+                                                            </div>
+                                                        )}
+                                                        
+                                                        {/* Delete Button */}
+                                                        {editMode && (
+                                                            <button 
+                                                                onClick={() => deleteWebApp(app.id)} 
+                                                                className="absolute right-0 top-1/2 -translate-y-1/2 p-1 text-lrgex-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                                                                title="Remove Separator"
+                                                            >
+                                                                <Trash2 size={12}/>
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                );
+                                            }
+
+                                            return (
+                                                <div key={app.id} className="h-[160px]">
+                                                    <WebAppCard 
+                                                        app={app} 
+                                                        editMode={editMode}
+                                                        onEdit={(a) => { setEditingWebApp(a); setShowWebAppModal(true); }}
+                                                        onDelete={deleteWebApp}
+                                                        onDragStart={(e, id) => {
+                                                            e.dataTransfer.setData('webAppId', id);
+                                                            e.dataTransfer.effectAllowed = 'move';
+                                                        }}
+                                                        onDrop={(e, targetId) => {
+                                                            const draggedId = e.dataTransfer.getData('webAppId');
+                                                            if (draggedId && draggedId !== targetId) moveWebApp(draggedId, targetId);
+                                                        }}
+                                                    />
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </section>
                             );
@@ -1011,7 +1201,8 @@ const App: React.FC = () => {
                                         )}
                                     </div>
                                     
-                                    <div className={`flex flex-wrap gap-6 ${alignClass} ${!isVisible ? 'pointer-events-none' : ''}`}>
+                                    {/* GRID LAYOUT - Dense Packing for Fluidity */}
+                                    <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-[180px] gap-6 grid-flow-dense ${!isVisible ? 'pointer-events-none' : ''}`}>
                                         {data.widgets.map((widget) => {
                                             const hasCustomCode = widget.type === WidgetType.UNIVERSAL && widget.config?.customCode;
                                             const wrapperTitle = hasCustomCode && !editMode ? undefined : widget.title;
@@ -1027,7 +1218,7 @@ const App: React.FC = () => {
                                                     h={widget.h}
                                                     onResize={(w, h) => resizeWidget(widget.id, w, h)}
                                                     onMove={moveWidget}
-                                                    className={getSizeClasses(widget.w, widget.h, 180)}
+                                                    className={getWidgetClasses(widget.w, widget.h)}
                                                 >
                                                     {renderWidgetContent(widget)}
                                                 </WidgetWrapper>
@@ -1098,7 +1289,8 @@ const App: React.FC = () => {
                                         )}
                                     </div>
                                     
-                                    <div className={`flex flex-wrap gap-6 ${alignClass} ${!isVisible ? 'pointer-events-none' : ''}`}>
+                                    {/* GRID LAYOUT - Dense Packing for Bookmarks too */}
+                                    <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-[150px] gap-6 grid-flow-dense ${!isVisible ? 'pointer-events-none' : ''}`}>
                                         {data.categories.map(category => (
                                             <LinkGroup 
                                                 key={category.id} 
@@ -1114,7 +1306,7 @@ const App: React.FC = () => {
                                                 h={category.h}
                                                 onResize={(w, h) => resizeCategory(category.id, w, h)}
                                                 onMoveCategory={moveCategory}
-                                                className={getSizeClasses(category.w, category.h, 150)}
+                                                className={getWidgetClasses(category.w, category.h)}
                                             />
                                         ))}
                                     </div>
@@ -1128,7 +1320,7 @@ const App: React.FC = () => {
             
             <footer className="w-full py-4 border-t border-lrgex-border text-center bg-lrgex-bg shrink-0 z-10">
                 <p className="text-xs text-lrgex-muted font-mono">
-                Made by LRGEX ver 1.0 {year}
+                Made by LRGEX ver 2.4 {year}
                 </p>
             </footer>
         </div>

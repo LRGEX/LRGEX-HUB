@@ -151,7 +151,17 @@ export const UniversalWidget: React.FC<UniversalWidgetProps> = ({ config, onUpda
               label: editLabel,
               headers: parsedHeaders,
               icon: editIcon,
-              customCode: editCustomCode
+              customCode: editCustomCode,
+              customData: config.customData
+          });
+      }
+  };
+
+  const handleCustomDataUpdate = (newData: Record<string, any>) => {
+      if (onUpdate && config) {
+          onUpdate({
+              ...config,
+              customData: newData
           });
       }
   };
@@ -265,7 +275,12 @@ export const UniversalWidget: React.FC<UniversalWidgetProps> = ({ config, onUpda
                     </div>
                 </div>
             ) : hasCustomCode ? (
-                <CustomCodeWidget code={config.customCode!} onReportError={onReportError} />
+                <CustomCodeWidget 
+                    code={config.customCode!} 
+                    customData={config.customData || {}}
+                    onSetCustomData={handleCustomDataUpdate}
+                    onReportError={onReportError} 
+                />
             ) : (
                 <div className="text-center w-full">
                     <div className="text-3xl font-bold text-lrgex-text tracking-tight flex items-baseline justify-center gap-1 truncate px-1">

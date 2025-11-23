@@ -40,6 +40,7 @@ export interface UniversalWidgetConfig {
   unit?: string;
   icon?: string;
   customCode?: string; // Valid Javascript code for React component body
+  customData?: Record<string, any>; // Arbitrary data for custom widgets to persist state
 }
 
 export interface WidgetTemplate {
@@ -75,6 +76,8 @@ export interface LinkCategory {
 
 export interface WebApp {
   id: string;
+  type?: 'APP' | 'SEPARATOR'; // Default is APP
+  separatorType?: 'HORIZONTAL' | 'VERTICAL';
   name: string;
   url: string;
   description?: string;
@@ -86,6 +89,7 @@ export interface GeneralSettings {
   timezone: string;
   aiSidebarOpen: boolean;
   layoutAlign: 'start' | 'center' | 'end';
+  defaultWebAppTab: string;
 }
 
 export type BackupInterval = 'HOURLY' | 'DAILY' | 'WEEKLY';

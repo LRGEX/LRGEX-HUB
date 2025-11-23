@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Chat, FunctionDeclaration, Type, Part } from "@google/genai";
 import { AiSettings, WidgetType } from "../types";
 
@@ -82,6 +83,12 @@ const getSystemPrompt = (settings: AiSettings) => {
            - Use Flexbox/Grid to center content or distribute space.
            - Example: If \`props.height < 100\`, hide detailed charts or large text.
            - Ensure text scales or wraps correctly so no clipping occurs.
+         - **PERSISTENT STATE (Config)**:
+           - Standard \`useState\` resets on reload.
+           - To store settings (API Keys, URLs, Colors) that persist across reloads, use \`props.customData\` (object) and \`props.setCustomData(newObj)\`.
+           - Example: \`const apiKey = props.customData.apiKey || '';\`
+           - Update: \`props.setCustomData({ ...props.customData, apiKey: 'new_key' });\`
+           - If you create a configuration form inside the widget, bind inputs to \`props.customData\`.
          - Example Return: \`return React.createElement('div', { className: 'w-full h-full flex items-center justify-center bg-slate-900 text-white' }, \`Size: \${Math.round(props.width)}x\${Math.round(props.height)}\`);\`
          
          RULES FOR WEB APPS (NEW):
@@ -89,15 +96,10 @@ const getSystemPrompt = (settings: AiSettings) => {
          - **BULK CREATION MANDATE**: If the user provides a list of multiple apps (e.g. "App Name: X, URL: Y... App Name: A, URL: B..."), you MUST call \`addWebApp\` separately for **EVERY SINGLE APP**. Do NOT summarize. Do NOT skip any.
          - **Smart Inference**: If user gives "IP:Port" (e.g. "192.168.1.5:8989"):
            1. **URL**: Automatically prepend 'http://' to IP addresses if missing.
-           2. **Category**: INFER the category based on the app's function.
-              - **Media**: Plex, Jellyfin, Sonarr, Radarr, Lidarr, Overseerr, Tautulli, Bazarr, Prowlarr.
-              - **Docker**: Portainer, Dockge, Watchtower.
-              - **Network/Security**: Pi-hole, AdGuard, Unifi, Nginx Proxy Manager, Cloudflare, Tailscale.
-              - **Home**: Home Assistant, Homebridge, Scrypted.
-              - **Downloads**: SABnzbd, qBittorrent, Transmission.
-              - **Monitoring**: Grafana, Prometheus, Uptime Kuma, Netdata.
-              - **Productivity/Other**: Nextcloud, Syncthing, Paperless, Homarr.
-              - **AI**: Ollama, Open WebUI, LocalAI.
+           2. **Category**: 
+              - CHECK EXISTING CATEGORIES FIRST. If the user asks for "Jellyfin", and "Media" category exists, use "Media". Do NOT create "Media Server" or "Media Tools" if "Media" covers it.
+              - **Prioritize Broad Categories**: Docker, Media, Network, Security, Home, Downloads, Monitoring, Productivity, AI.
+              - Avoid sub-categories unless strictly necessary.
            3. **Icon**: Generate a CDN URL: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/{app-name-lowercase-kebab-case}.png".
               - Example: "Home Assistant" -> "home-assistant.png"
            4. **Description**: Generate a very short 4-5 word description (e.g. "Media Management" or "Docker Container GUI") if one isn't provided.
