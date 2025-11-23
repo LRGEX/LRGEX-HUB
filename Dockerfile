@@ -7,12 +7,16 @@ WORKDIR /app
 # Copy package files first to leverage Docker cache for dependencies
 COPY package.json ./
 
-# Install production dependencies
-# We use --omit=dev to keep the image small
-RUN npm install --omit=dev
+# Install ALL dependencies (including devDependencies like esbuild)
+# Important: We need devDeps to run the 'npm run build' script successfully
+RUN npm install
 
 # Copy the rest of the application code
 COPY . .
+
+# Build the React application (generates bundle.js)
+# The build script in package.json handles the bundling
+RUN npm run build
 
 # Expose the port the app runs on
 EXPOSE 3000

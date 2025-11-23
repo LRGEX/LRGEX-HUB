@@ -27,6 +27,14 @@ const BACKUPS_DIR = path.join(CONFIG_DIR, 'backups');
 
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
+// Debug: Check if bundle exists on start
+const bundlePath = path.join(__dirname, 'bundle.js');
+if (fs.existsSync(bundlePath)) {
+    console.log(`[Startup] bundle.js found at ${bundlePath} (${fs.statSync(bundlePath).size} bytes)`);
+} else {
+    console.error(`[Startup] CRITICAL: bundle.js NOT FOUND at ${bundlePath}. build script may have failed.`);
+}
+
 // --- API Routes ---
 
 // GET /api/config - Load persistent configuration
@@ -135,8 +143,20 @@ app.get('/api/backups/:filename', (req, res) => {
     });
 });
 
+// Explicitly serve bundle.js to prevent falling through to index.html (and causing SyntaxError <)
+app.get('/bundle.js', (req, res) => {
+    const bundleFile = path.join(__dirname, 'bundle.js');
+    if (fs.existsSync(bundleFile)) {
+        res.sendFile(bundleFile);
+    } else {
+        console.error("Request for bundle.js failed - file not found");
+        res.status(404).send('bundle.js not found');
+    }
+});
+
 // Serve static files (excluding index.html to prevent raw serving)
-app.use(express.static(__dirname, { index: false }));
+// Using explicit path to avoid confusion
+app.use(express.static(path.join(__dirname), { index: false }));
 
 // Handle SPA routing and Env Injection
 app.get('*', (req, res) => {
