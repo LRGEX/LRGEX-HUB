@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { WidgetWrapper } from './components/WidgetWrapper';
 import { UniversalWidget } from './components/widgets/UniversalWidget';
 import { AiWidget } from './components/widgets/GeminiWidget';
@@ -8,9 +7,11 @@ import { ProxmoxWidget } from './components/widgets/ProxmoxWidget';
 import { SabnzbdWidget } from './components/widgets/SabnzbdWidget';
 import { LinkGroup } from './components/LinkGroup';
 import { BackupModal } from './components/BackupModal';
-import { AppData, WidgetType, WidgetConfig, LinkItem, UniversalWidgetConfig, AiSettings, WidgetTemplate, GeneralSettings, BackupSettings } from './types';
+import { WebAppCard } from './components/WebAppCard';
+import { WebAppModal } from './components/WebAppModal';
+import { AppData, WidgetType, WidgetConfig, LinkItem, UniversalWidgetConfig, AiSettings, WidgetTemplate, GeneralSettings, BackupSettings, WebApp } from './types';
 import { saveBackupToServer } from './services/backupService';
-import { Settings, Check, FolderPlus, X, LayoutTemplate, Trash2, Bot, Save, Clock, Cloud, Database, PanelRightClose, PanelRightOpen, GripVertical, AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
+import { Settings, Check, FolderPlus, X, LayoutTemplate, Trash2, Bot, Save, Clock, Cloud, Database, PanelRightClose, PanelRightOpen, GripVertical, AlignLeft, AlignCenter, AlignRight, Eye, EyeOff, Plus, Search, AppWindow } from 'lucide-react';
 
 // Helper for generating unique IDs
 const generateUUID = () => {
@@ -33,6 +34,7 @@ const getBrowserTimezone = () => {
 const DEFAULT_AI_SETTINGS: AiSettings = {
     provider: 'GEMINI',
     mode: 'COMMANDER',
+    chatFontSize: 'medium',
     geminiKey: process.env.API_KEY || '',
     openRouterKey: '',
     openRouterModel: 'x-ai/grok-4.1-fast',
@@ -52,6 +54,7 @@ const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
 const DEFAULT_DATA: AppData = {
   widgets: [], // Empty by default, AI is now separate
   categories: [],
+  webApps: [],
   aiSettings: DEFAULT_AI_SETTINGS,
   templates: [],
   generalSettings: {
@@ -60,7 +63,8 @@ const DEFAULT_DATA: AppData = {
     layoutAlign: 'center'
   },
   backupSettings: DEFAULT_BACKUP_SETTINGS,
-  sectionOrder: ['widgets', 'bookmarks']
+  sectionOrder: ['webApps', 'widgets', 'bookmarks'],
+  sectionVisibility: { widgets: true, bookmarks: true, webApps: true }
 };
 
 // --- Modal Component for Templates ---
@@ -124,6 +128,12 @@ const App: React.FC = () => {
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   
+  // Web Apps State
+  const [activeWebAppTab, setActiveWebAppTab] = useState('All');
+  const [webAppSearch, setWebAppSearch] = useState('');
+  const [showWebAppModal, setShowWebAppModal] = useState(false);
+  const [editingWebApp, setEditingWebApp] = useState<WebApp | undefined>(undefined);
+
   // Drag state for sections
   const [draggedSection, setDraggedSection] = useState<string | null>(null);
   
@@ -136,6 +146,9 @@ const App: React.FC = () => {
   
   // Template Deletion State
   const [confirmDeleteTemplateId, setConfirmDeleteTemplateId] = useState<string | null>(null);
+
+  // AI Prompt Override (from widget errors)
+  const [aiPromptOverride, setAiPromptOverride] = useState<string | null>(null);
 
   // Available Timezones
   const timezones = useMemo(() => {
@@ -195,25 +208,28 @@ const App: React.FC = () => {
     const loadConfig = async () => {
         try {
             const res = await fetch('/api/config');
+            const text = await res.text();
             
             if (!res.ok) {
+                console.error(`Failed to load config (Status: ${res.status}):`, text);
                 throw new Error(`Server returned ${res.status}`);
             }
 
-            // Consume as text first to avoid stream errors and allow debug logging
-            const text = await res.text();
             let serverData = null;
-            
             try {
                 serverData = JSON.parse(text);
             } catch (parseErr) {
-                console.error("Failed to parse config JSON:", text);
+                console.error("Failed to parse config JSON. Raw text:", text);
             }
 
             if (serverData && Object.keys(serverData).length > 0) {
-                // Migration: Remove old AI widgets from the grid if they exist
                 const cleanWidgets = (serverData.widgets || []).filter((w: any) => w.type !== WidgetType.AI);
-        
+                
+                const loadedSectionOrder = serverData.sectionOrder || DEFAULT_DATA.sectionOrder;
+                if (!loadedSectionOrder.includes('webApps')) {
+                    loadedSectionOrder.unshift('webApps');
+                }
+
                 const loadedData = {
                     ...DEFAULT_DATA,
                     ...serverData,
@@ -222,7 +238,8 @@ const App: React.FC = () => {
                     templates: serverData.templates || [],
                     generalSettings: { ...DEFAULT_DATA.generalSettings, ...(serverData.generalSettings || {}) },
                     backupSettings: { ...DEFAULT_BACKUP_SETTINGS, ...(serverData.backupSettings || {}) },
-                    sectionOrder: serverData.sectionOrder || DEFAULT_DATA.sectionOrder
+                    sectionOrder: loadedSectionOrder,
+                    sectionVisibility: { ...DEFAULT_DATA.sectionVisibility, ...(serverData.sectionVisibility || {}) }
                 };
                 setData(loadedData);
                 setSidebarOpen(loadedData.generalSettings.aiSidebarOpen);
@@ -237,7 +254,6 @@ const App: React.FC = () => {
   }, []);
 
   // Auto-Save to Server (Debounced)
-  // Replaces localStorage to ensure data persists in Docker volume
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -260,18 +276,23 @@ const App: React.FC = () => {
         }
     };
 
-    const timeoutId = setTimeout(saveData, 1000); // Debounce 1s
+    const timeoutId = setTimeout(saveData, 1000);
     return () => clearTimeout(timeoutId);
   }, [data, isLoaded, sidebarOpen]);
 
   // --- Actions ---
+
+  const reportWidgetError = useCallback((error: string) => {
+      setAiPromptOverride(`I'm getting this error with the custom widget code:\n\n${error}\n\nFix it and recreate the widget.`);
+      setSidebarOpen(true);
+  }, []);
 
   const removeWidget = (id: string) => {
     setData(prev => ({ ...prev, widgets: prev.widgets.filter(w => w.id !== id) }));
   };
 
   const addWidget = (type: WidgetType, config?: UniversalWidgetConfig) => {
-    if (type === WidgetType.AI) return; // Prevent AI widget in grid
+    if (type === WidgetType.AI) return;
 
     const newWidget: WidgetConfig = {
       id: generateUUID(),
@@ -282,6 +303,16 @@ const App: React.FC = () => {
       h: 1
     };
     setData(prev => ({ ...prev, widgets: [...prev.widgets, newWidget] }));
+  };
+
+  const handleManualAddWidget = () => {
+    addWidget(WidgetType.UNIVERSAL, {
+        label: 'New Widget',
+        endpoint: '',
+        jsonPath: '',
+        method: 'GET',
+        refreshInterval: 10000
+    });
   };
 
   const updateWidgetConfig = (id: string, newConfig: UniversalWidgetConfig) => {
@@ -327,7 +358,6 @@ const App: React.FC = () => {
           setConfirmDeleteTemplateId(null);
       } else {
           setConfirmDeleteTemplateId(id);
-          // Reset confirmation after 3 seconds
           setTimeout(() => setConfirmDeleteTemplateId(null), 3000);
       }
   };
@@ -354,6 +384,16 @@ const App: React.FC = () => {
     setData(prev => ({ ...prev, widgets: newWidgets }));
   };
 
+  const toggleSectionVisibility = (section: string) => {
+      setData(prev => ({
+          ...prev,
+          sectionVisibility: {
+              ...prev.sectionVisibility,
+              [section]: !prev.sectionVisibility[section]
+          }
+      }));
+  };
+
   const confirmAddCategory = () => {
     if (newCategoryName.trim()) {
         setData(prev => ({
@@ -363,7 +403,7 @@ const App: React.FC = () => {
               title: newCategoryName, 
               links: [],
               w: 1,
-              h: 2 // Default height for new category
+              h: 2
             }]
         }));
         setNewCategoryName('');
@@ -447,7 +487,6 @@ const App: React.FC = () => {
           const link = sourceCat.links.find(l => l.id === linkId);
           if (!link) return prev;
 
-          // Remove from source, add to target
           return {
               ...prev,
               categories: prev.categories.map(c => {
@@ -461,6 +500,24 @@ const App: React.FC = () => {
               })
           };
       });
+  };
+
+  const handleSaveWebApp = (app: Omit<WebApp, 'id'>) => {
+    setData(prev => {
+        const newApp = { ...app, id: editingWebApp?.id || generateUUID() };
+        let newWebApps = [...prev.webApps];
+        if (editingWebApp) {
+            newWebApps = newWebApps.map(a => a.id === editingWebApp.id ? newApp : a);
+        } else {
+            newWebApps.push(newApp);
+        }
+        return { ...prev, webApps: newWebApps };
+    });
+    setEditingWebApp(undefined);
+  };
+
+  const deleteWebApp = (id: string) => {
+      setData(prev => ({ ...prev, webApps: prev.webApps.filter(a => a.id !== id) }));
   };
 
   const updateAiSettings = (settings: AiSettings) => {
@@ -486,7 +543,6 @@ const App: React.FC = () => {
   };
 
   const handleRestore = (newData: AppData) => {
-      // Ensure safe defaults for new features if restoring old backup
       setData(prev => {
           const merged: AppData = {
               ...DEFAULT_DATA,
@@ -494,18 +550,20 @@ const App: React.FC = () => {
               aiSettings: { ...DEFAULT_AI_SETTINGS, ...newData.aiSettings },
               generalSettings: { ...DEFAULT_DATA.generalSettings, ...newData.generalSettings },
               backupSettings: { ...DEFAULT_BACKUP_SETTINGS, ...newData.backupSettings },
-              sectionOrder: newData.sectionOrder || DEFAULT_DATA.sectionOrder
+              sectionOrder: newData.sectionOrder || DEFAULT_DATA.sectionOrder,
+              sectionVisibility: { ...DEFAULT_DATA.sectionVisibility, ...(newData.sectionVisibility || {}) },
+              webApps: newData.webApps || []
           };
+          if (!merged.sectionOrder.includes('webApps')) merged.sectionOrder.unshift('webApps');
           return merged;
       });
   };
 
-  // Section Reordering Logic
   const handleSectionDragStart = (e: React.DragEvent, sectionId: string) => {
       if (!editMode) return;
       setDraggedSection(sectionId);
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', sectionId); // Firefox requirement
+      e.dataTransfer.setData('text/plain', sectionId); 
   };
 
   const handleSectionDragOver = (e: React.DragEvent, targetSectionId: string) => {
@@ -531,19 +589,18 @@ const App: React.FC = () => {
       setDraggedSection(null);
   };
 
+  const handleAiAddWidget = (type: WidgetType, config?: UniversalWidgetConfig) => addWidget(type, config);
   const handleAiAddBookmark = (categoryName: string, title: string, url: string, iconUrl?: string, categoryIconUrl?: string) => {
     setData(prev => {
       const cleanUrl = url.startsWith('http') ? url : `https://${url}`;
       const normalize = (u: string) => u.replace(/\/$/, '').toLowerCase();
       const normalizedCleanUrl = normalize(cleanUrl);
 
-      // 1. Deep copy and remove this URL from ALL existing categories
       let newCategories = prev.categories.map(c => ({
         ...c,
         links: c.links.filter(l => normalize(l.url) !== normalizedCleanUrl)
       }));
 
-      // 2. Find or create the target category
       let categoryIndex = newCategories.findIndex(c => c.title.toLowerCase() === categoryName.toLowerCase());
       
       if (categoryIndex === -1) {
@@ -560,7 +617,6 @@ const App: React.FC = () => {
           newCategories[categoryIndex] = { ...newCategories[categoryIndex], iconUrl: categoryIconUrl };
       }
 
-      // 3. Add the link
       newCategories[categoryIndex] = {
         ...newCategories[categoryIndex],
         links: [...newCategories[categoryIndex].links, { id: generateUUID(), title, url: cleanUrl, iconUrl }]
@@ -570,6 +626,40 @@ const App: React.FC = () => {
     });
   };
 
+  const addWebAppRef = useRef((args: { name: string; url: string; description?: string; category: string; iconUrl?: string }) => {
+      setData(prev => ({
+          ...prev,
+          webApps: [...prev.webApps, {
+              id: generateUUID(),
+              name: args.name,
+              url: args.url,
+              description: args.description,
+              category: args.category,
+              iconUrl: args.iconUrl
+          }]
+      }));
+  });
+  
+  useEffect(() => {
+      addWebAppRef.current = (args) => {
+        setData(prev => ({
+            ...prev,
+            webApps: [...prev.webApps, {
+                id: generateUUID(),
+                name: args.name,
+                url: args.url,
+                description: args.description,
+                category: args.category,
+                iconUrl: args.iconUrl
+            }]
+        }));
+      };
+  }, []);
+
+  const handleAiAddWebApp = (args: { name: string; url: string; description?: string; category: string; iconUrl?: string }) => {
+     addWebAppRef.current(args);
+  };
+
   const renderWidgetContent = (widget: WidgetConfig) => {
     switch (widget.type) {
       case WidgetType.UNIVERSAL: 
@@ -577,6 +667,7 @@ const App: React.FC = () => {
             config={widget.config} 
             onUpdate={(newConfig) => updateWidgetConfig(widget.id, newConfig)}
             onSaveTemplate={openSaveTemplateModal}
+            onReportError={reportWidgetError}
             editMode={editMode}
         />;
       case WidgetType.WEATHER: return <WeatherWidget config={widget.config} />;
@@ -600,7 +691,6 @@ const App: React.FC = () => {
     return `${widthClass} ${heightClass}`;
   };
 
-  // --- Logo Component ---
   const LrgexLogo = () => (
     <img 
       src="https://download.lrgex.com/logo_Dark.svg" 
@@ -618,11 +708,29 @@ const App: React.FC = () => {
   }).format(currentTime);
   const year = currentTime.getFullYear();
 
-  const hasWidgets = data.widgets.length > 0;
   const alignClass = data.generalSettings.layoutAlign === 'center' ? 'justify-center' : data.generalSettings.layoutAlign === 'end' ? 'justify-end' : 'justify-start';
 
+  const webAppCategories = useMemo(() => {
+      const cats = new Set(data.webApps.map(a => a.category));
+      return Array.from(cats).sort();
+  }, [data.webApps]);
+
+  const filteredWebApps = useMemo(() => {
+      return data.webApps.filter(app => {
+          const matchesTab = activeWebAppTab === 'All' || app.category === activeWebAppTab;
+          const matchesSearch = app.name.toLowerCase().includes(webAppSearch.toLowerCase()) || 
+                               (app.description || '').toLowerCase().includes(webAppSearch.toLowerCase());
+          return matchesTab && matchesSearch;
+      });
+  }, [data.webApps, activeWebAppTab, webAppSearch]);
+
+  const allWebAppCategories = useMemo(() => 
+    ['Docker', 'Media', 'AI', 'Servers', 'Trading', 'Web', 'Other', ...webAppCategories], 
+    [webAppCategories]
+  );
+
   return (
-    <div className="min-h-screen bg-lrgex-bg text-lrgex-text font-sans selection:bg-lrgex-orange selection:text-white flex flex-col overflow-hidden">
+    <div className="h-screen bg-lrgex-bg text-lrgex-text font-sans selection:bg-lrgex-orange selection:text-white flex flex-col overflow-hidden">
       
       <SaveTemplateModal 
           isOpen={templateModalOpen} 
@@ -638,12 +746,18 @@ const App: React.FC = () => {
           onRestore={handleRestore}
           onUpdateSettings={updateBackupSettings}
       />
+      
+      <WebAppModal 
+        isOpen={showWebAppModal}
+        onClose={() => { setShowWebAppModal(false); setEditingWebApp(undefined); }}
+        onSave={handleSaveWebApp}
+        initialData={editingWebApp}
+        existingCategories={allWebAppCategories}
+      />
 
-      {/* Header */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-lrgex-menu/95 backdrop-blur-lg border-b border-lrgex-border shadow-lg h-20">
         <div className="w-full px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between">
           <div className="flex items-center gap-6">
-            {/* Logo Area - Fixed Overlap Issue */}
             <div className="flex flex-col items-end leading-none">
                  <LrgexLogo />
                  <span className="text-[21px] font-bold text-lrgex-muted tracking-[0.25em] group-hover:text-lrgex-orange transition-colors -mt-1.5 mr-1 translate-y-[5px]">HUB</span>
@@ -673,7 +787,6 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-3">
-             {/* Edit Mode Layout Controls */}
              {editMode && (
                  <div className="hidden lg:flex bg-lrgex-panel border border-lrgex-border rounded-full p-1 mr-2">
                     <button onClick={() => updateLayoutAlign('start')} className={`p-1.5 rounded-full ${data.generalSettings.layoutAlign === 'start' ? 'bg-lrgex-orange text-white' : 'text-lrgex-muted hover:text-white'}`} title="Align Left"><AlignLeft size={14} /></button>
@@ -682,7 +795,6 @@ const App: React.FC = () => {
                  </div>
              )}
 
-             {/* Sidebar Toggle */}
             <button 
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 className={`p-2 rounded-full transition-colors border border-transparent ${sidebarOpen ? 'text-lrgex-orange bg-lrgex-orange/10 border-lrgex-orange/20' : 'text-lrgex-muted hover:text-white hover:bg-lrgex-hover'}`}
@@ -716,21 +828,113 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Layout Container */}
       <div className="flex flex-1 overflow-hidden relative pt-20">
         
-        {/* Center Content + Footer Wrapper */}
         <div className="flex-1 flex flex-col min-w-0">
             <main className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 lg:p-8 flex flex-col">
                 <div className="max-w-[1600px] mx-auto w-full space-y-10 flex-1">
                     
                     {data.sectionOrder.map(section => {
-                        
-                        if (section === 'widgets' && hasWidgets) {
+                        const isVisible = data.sectionVisibility[section] !== false;
+
+                        if (!isVisible && !editMode) return null;
+
+                        const opacityClass = !isVisible ? 'opacity-50 grayscale' : '';
+
+                        if (section === 'webApps') {
+                            return (
+                                <section 
+                                    key="webApps" 
+                                    className={`animate-in fade-in duration-500 ${opacityClass} ${editMode ? 'ring-1 ring-transparent hover:ring-lrgex-border rounded-xl p-2 -m-2 transition-all' : ''}`}
+                                    onDragOver={(e) => handleSectionDragOver(e, 'webApps')}
+                                    onDrop={(e) => handleSectionDrop(e, 'webApps')}
+                                >
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 border-b border-lrgex-orange pb-2 gap-4">
+                                        <div className="flex items-center gap-4">
+                                            <h2 className="text-lg font-semibold text-lrgex-text flex items-center gap-2 group cursor-default">
+                                                {editMode && (
+                                                    <div 
+                                                        draggable 
+                                                        onDragStart={(e) => handleSectionDragStart(e, 'webApps')}
+                                                        className="cursor-move text-lrgex-muted/30 hover:text-lrgex-orange p-1"
+                                                    >
+                                                        <GripVertical size={18} />
+                                                    </div>
+                                                )}
+                                                Web Apps
+                                                {!isVisible && editMode && <span className="text-[10px] font-normal text-lrgex-muted border border-lrgex-muted/30 px-2 py-0.5 rounded ml-2">HIDDEN</span>}
+                                            </h2>
+                                            
+                                            <div className="relative group">
+                                                <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-lrgex-muted group-focus-within:text-lrgex-orange" />
+                                                <input 
+                                                    className="bg-lrgex-bg/50 border border-lrgex-border rounded-full pl-8 pr-3 py-1 text-xs text-lrgex-text focus:border-lrgex-orange outline-none w-48 transition-all"
+                                                    placeholder="Search apps..."
+                                                    value={webAppSearch}
+                                                    onChange={e => setWebAppSearch(e.target.value)}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-2 flex-wrap justify-end">
+                                            <div className="flex bg-lrgex-bg/30 p-1 rounded-lg border border-lrgex-border overflow-x-auto custom-scrollbar max-w-full">
+                                                {['All', ...webAppCategories].map(cat => (
+                                                    <button
+                                                        key={cat}
+                                                        onClick={() => setActiveWebAppTab(cat)}
+                                                        className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all whitespace-nowrap ${activeWebAppTab === cat ? 'bg-lrgex-text text-lrgex-bg shadow-sm' : 'text-lrgex-muted hover:text-lrgex-text hover:bg-lrgex-hover'}`}
+                                                    >
+                                                        {cat}
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            {editMode && (
+                                                <>
+                                                    <button 
+                                                        onClick={() => { setEditingWebApp(undefined); setShowWebAppModal(true); }}
+                                                        className="text-xs bg-lrgex-orange hover:bg-orange-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors shadow-lg shadow-orange-900/20"
+                                                    >
+                                                        <AppWindow size={14} /> Add App
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => toggleSectionVisibility('webApps')}
+                                                        className={`p-1.5 rounded-full border transition-colors ${isVisible ? 'text-lrgex-muted border-transparent hover:bg-lrgex-panel' : 'text-lrgex-text bg-lrgex-panel border-lrgex-muted'}`}
+                                                        title={isVisible ? "Hide Section" : "Show Section"}
+                                                    >
+                                                        {isVisible ? <Eye size={16} /> : <EyeOff size={16} />}
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 ${!isVisible ? 'pointer-events-none' : ''}`}>
+                                        {filteredWebApps.map(app => (
+                                            <div key={app.id} className="h-40">
+                                                <WebAppCard 
+                                                    app={app} 
+                                                    editMode={editMode}
+                                                    onEdit={(a) => { setEditingWebApp(a); setShowWebAppModal(true); }}
+                                                    onDelete={deleteWebApp}
+                                                />
+                                            </div>
+                                        ))}
+                                        {filteredWebApps.length === 0 && (
+                                            <div className="col-span-full text-center py-8 text-lrgex-muted/50 border border-dashed border-lrgex-border rounded-xl">
+                                                No apps found.
+                                            </div>
+                                        )}
+                                    </div>
+                                </section>
+                            );
+                        }
+
+                        if (section === 'widgets') {
                             return (
                                 <section 
                                     key="widgets" 
-                                    className={`animate-in fade-in duration-500 ${editMode ? 'ring-1 ring-transparent hover:ring-lrgex-border rounded-xl p-2 -m-2 transition-all' : ''}`}
+                                    className={`animate-in fade-in duration-500 ${opacityClass} ${editMode ? 'ring-1 ring-transparent hover:ring-lrgex-border rounded-xl p-2 -m-2 transition-all' : ''}`}
                                     onDragOver={(e) => handleSectionDragOver(e, 'widgets')}
                                     onDrop={(e) => handleSectionDrop(e, 'widgets')}
                                 >
@@ -747,10 +951,27 @@ const App: React.FC = () => {
                                             )}
                                             Widgets
                                             {editMode && <span className="text-[10px] font-normal text-lrgex-orange bg-lrgex-orange/10 px-2 py-0.5 rounded border border-lrgex-orange/20">EDITING</span>}
+                                            {!isVisible && editMode && <span className="text-[10px] font-normal text-lrgex-muted border border-lrgex-muted/30 px-2 py-0.5 rounded">HIDDEN</span>}
                                         </h2>
                                         {editMode && (
                                             <div className="flex gap-2">
-                                                {/* Template Dropdown */}
+                                                <button 
+                                                    onClick={handleManualAddWidget} 
+                                                    className="text-xs bg-lrgex-orange hover:bg-orange-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors shadow-lg shadow-orange-900/20"
+                                                >
+                                                    <Plus size={14} /> New Widget
+                                                </button>
+
+                                                <button 
+                                                    onClick={() => toggleSectionVisibility('widgets')}
+                                                    className={`p-1.5 rounded-full border transition-colors ${isVisible ? 'text-lrgex-muted border-transparent hover:bg-lrgex-panel' : 'text-lrgex-text bg-lrgex-panel border-lrgex-muted'}`}
+                                                    title={isVisible ? "Hide Section" : "Show Section"}
+                                                >
+                                                    {isVisible ? <Eye size={16} /> : <EyeOff size={16} />}
+                                                </button>
+
+                                                <div className="w-px h-6 bg-lrgex-border mx-1" />
+
                                                 {data.templates.length > 0 && (
                                                     <div className="relative">
                                                         <button 
@@ -789,10 +1010,9 @@ const App: React.FC = () => {
                                             </div>
                                         )}
                                     </div>
-
-                                    <div className={`flex flex-wrap gap-6 ${alignClass}`}>
+                                    
+                                    <div className={`flex flex-wrap gap-6 ${alignClass} ${!isVisible ? 'pointer-events-none' : ''}`}>
                                         {data.widgets.map((widget) => {
-                                            // Hide title bar for custom widgets in View mode to allow 100% height usage
                                             const hasCustomCode = widget.type === WidgetType.UNIVERSAL && widget.config?.customCode;
                                             const wrapperTitle = hasCustomCode && !editMode ? undefined : widget.title;
 
@@ -822,7 +1042,7 @@ const App: React.FC = () => {
                             return (
                                 <section 
                                     key="bookmarks" 
-                                    className={`flex-1 ${editMode ? 'ring-1 ring-transparent hover:ring-lrgex-border rounded-xl p-2 -m-2 transition-all' : ''}`}
+                                    className={`flex-1 ${opacityClass} ${editMode ? 'ring-1 ring-transparent hover:ring-lrgex-border rounded-xl p-2 -m-2 transition-all' : ''}`}
                                     onDragOver={(e) => handleSectionDragOver(e, 'bookmarks')}
                                     onDrop={(e) => handleSectionDrop(e, 'bookmarks')}
                                 >
@@ -838,34 +1058,47 @@ const App: React.FC = () => {
                                                 </div>
                                             )}
                                             Bookmarks
+                                            {!isVisible && editMode && <span className="text-[10px] font-normal text-lrgex-muted border border-lrgex-muted/30 px-2 py-0.5 rounded ml-2">HIDDEN</span>}
                                         </h2>
                                         
-                                        {editMode && !isAddingCategory && (
-                                            <button 
-                                                onClick={() => setIsAddingCategory(true)} 
-                                                className="text-xs bg-lrgex-orange hover:bg-orange-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors shadow-lg shadow-orange-900/20"
-                                            >
-                                                <FolderPlus size={14} /> New Category
-                                            </button>
-                                        )}
+                                        {editMode && (
+                                            <div className="flex items-center gap-2">
+                                                 {!isAddingCategory && (
+                                                    <button 
+                                                        onClick={() => setIsAddingCategory(true)} 
+                                                        className="text-xs bg-lrgex-orange hover:bg-orange-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors shadow-lg shadow-orange-900/20"
+                                                    >
+                                                        <FolderPlus size={14} /> New Category
+                                                    </button>
+                                                )}
 
-                                        {editMode && isAddingCategory && (
-                                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-4 duration-300">
-                                                <input 
-                                                    autoFocus
-                                                    placeholder="Category Name..." 
-                                                    value={newCategoryName}
-                                                    onChange={(e) => setNewCategoryName(e.target.value)}
-                                                    onKeyDown={(e) => e.key === 'Enter' && confirmAddCategory()}
-                                                    className="bg-lrgex-panel border border-lrgex-border text-xs px-2 py-1 rounded text-lrgex-text focus:border-lrgex-orange outline-none w-40"
-                                                />
-                                                <button onClick={confirmAddCategory} className="text-emerald-400 hover:text-emerald-300"><Check size={16}/></button>
-                                                <button onClick={() => { setIsAddingCategory(false); setNewCategoryName(''); }} className="text-red-400 hover:text-red-300"><X size={16}/></button>
+                                                <button 
+                                                    onClick={() => toggleSectionVisibility('bookmarks')}
+                                                    className={`p-1.5 rounded-full border transition-colors ${isVisible ? 'text-lrgex-muted border-transparent hover:bg-lrgex-panel' : 'text-lrgex-text bg-lrgex-panel border-lrgex-muted'}`}
+                                                    title={isVisible ? "Hide Section" : "Show Section"}
+                                                >
+                                                    {isVisible ? <Eye size={16} /> : <EyeOff size={16} />}
+                                                </button>
+
+                                                {isAddingCategory && (
+                                                    <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-4 duration-300">
+                                                        <input 
+                                                            autoFocus
+                                                            placeholder="Category Name..." 
+                                                            value={newCategoryName}
+                                                            onChange={(e) => setNewCategoryName(e.target.value)}
+                                                            onKeyDown={(e) => e.key === 'Enter' && confirmAddCategory()}
+                                                            className="bg-lrgex-panel border border-lrgex-border text-xs px-2 py-1 rounded text-lrgex-text focus:border-lrgex-orange outline-none w-40"
+                                                        />
+                                                        <button onClick={confirmAddCategory} className="text-emerald-400 hover:text-emerald-300"><Check size={16}/></button>
+                                                        <button onClick={() => { setIsAddingCategory(false); setNewCategoryName(''); }} className="text-red-400 hover:text-red-300"><X size={16}/></button>
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
                                     
-                                    <div className={`flex flex-wrap gap-6 ${alignClass}`}>
+                                    <div className={`flex flex-wrap gap-6 ${alignClass} ${!isVisible ? 'pointer-events-none' : ''}`}>
                                         {data.categories.map(category => (
                                             <LinkGroup 
                                                 key={category.id} 
@@ -893,7 +1126,6 @@ const App: React.FC = () => {
                 </div>
             </main>
             
-            {/* Footer - Fixed at bottom of Main Content Area */}
             <footer className="w-full py-4 border-t border-lrgex-border text-center bg-lrgex-bg shrink-0 z-10">
                 <p className="text-xs text-lrgex-muted font-mono">
                 Made by LRGEX ver 1.0 {year}
@@ -901,14 +1133,16 @@ const App: React.FC = () => {
             </footer>
         </div>
 
-        {/* Right AI Sidebar */}
         <aside className={`${sidebarOpen ? 'w-[400px] border-l' : 'w-0 border-l-0'} transition-[width] duration-300 ease-in-out bg-lrgex-menu/30 border-lrgex-border flex flex-col shrink-0 overflow-hidden relative`}>
              <div className="w-[400px] h-full flex flex-col">
                 <AiWidget 
                     settings={data.aiSettings} 
                     onUpdateSettings={updateAiSettings}
-                    onAddWidget={addWidget} 
-                    onAddBookmark={handleAiAddBookmark} 
+                    onAddWidget={handleAiAddWidget} 
+                    onAddBookmark={handleAiAddBookmark}
+                    onAddWebApp={handleAiAddWebApp}
+                    externalPrompt={aiPromptOverride}
+                    onClearExternalPrompt={() => setAiPromptOverride(null)}
                 />
              </div>
         </aside>

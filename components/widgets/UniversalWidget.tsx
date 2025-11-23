@@ -22,10 +22,11 @@ interface UniversalWidgetProps {
   config?: UniversalWidgetConfig;
   onUpdate?: (newConfig: UniversalWidgetConfig) => void;
   onSaveTemplate?: (config: UniversalWidgetConfig) => void;
+  onReportError?: (error: string) => void;
   editMode?: boolean;
 }
 
-export const UniversalWidget: React.FC<UniversalWidgetProps> = ({ config, onUpdate, onSaveTemplate, editMode = false }) => {
+export const UniversalWidget: React.FC<UniversalWidgetProps> = ({ config, onUpdate, onSaveTemplate, onReportError, editMode = false }) => {
   const [value, setValue] = useState<string | number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -264,7 +265,7 @@ export const UniversalWidget: React.FC<UniversalWidgetProps> = ({ config, onUpda
                     </div>
                 </div>
             ) : hasCustomCode ? (
-                <CustomCodeWidget code={config.customCode!} />
+                <CustomCodeWidget code={config.customCode!} onReportError={onReportError} />
             ) : (
                 <div className="text-center w-full">
                     <div className="text-3xl font-bold text-lrgex-text tracking-tight flex items-baseline justify-center gap-1 truncate px-1">

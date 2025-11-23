@@ -14,6 +14,7 @@ export type AiMode = 'COMMANDER' | 'ASSISTANT';
 export interface AiSettings {
   provider: AiProvider;
   mode: AiMode;
+  chatFontSize: 'small' | 'medium' | 'large';
   
   // Provider Configs
   geminiKey: string;
@@ -72,6 +73,15 @@ export interface LinkCategory {
   h?: number;
 }
 
+export interface WebApp {
+  id: string;
+  name: string;
+  url: string;
+  description?: string;
+  iconUrl?: string;
+  category: string; // Used for tabs
+}
+
 export interface GeneralSettings {
   timezone: string;
   aiSidebarOpen: boolean;
@@ -89,11 +99,13 @@ export interface BackupSettings {
 export interface AppData {
   widgets: WidgetConfig[];
   categories: LinkCategory[];
+  webApps: WebApp[];
   aiSettings: AiSettings;
   templates: WidgetTemplate[];
   generalSettings: GeneralSettings;
   backupSettings: BackupSettings;
-  sectionOrder: string[]; // 'widgets' | 'bookmarks'
+  sectionOrder: string[]; // 'widgets' | 'bookmarks' | 'webApps'
+  sectionVisibility: Record<string, boolean>; // e.g. { 'widgets': true, 'bookmarks': false }
 }
 
 export interface ChatMessage {

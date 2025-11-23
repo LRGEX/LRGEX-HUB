@@ -1,14 +1,16 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { sendMessageGemini, sendMessageOpenAi, sendMessageOllama, ToolExecutors } from '../../services/aiService';
 import { ChatMessage, AiSettings, UniversalWidgetConfig, WidgetType } from '../../types';
-import { Send, Bot, User, Loader2, Settings, ShieldAlert, Cpu, Trash2, Copy, Check, RotateCcw, Paperclip, X } from 'lucide-react';
+import { Send, Bot, User, Loader2, Settings, ShieldAlert, Cpu, Trash2, Copy, Check, RotateCcw, Paperclip, X, Type, Square } from 'lucide-react';
 
 interface AiWidgetProps {
   settings: AiSettings;
   onUpdateSettings: (s: AiSettings) => void;
   onAddWidget: (type: WidgetType, config?: UniversalWidgetConfig) => void;
   onAddBookmark: (categoryName: string, title: string, url: string, iconUrl?: string, categoryIconUrl?: string) => void;
+  onAddWebApp?: (args: { name: string; url: string; description?: string; category: string; iconUrl?: string }) => void;
+  externalPrompt?: string | null;
+  onClearExternalPrompt?: () => void;
 }
 
 // --- Simple Markdown Renderer (Zero-Dependency) ---
@@ -16,7 +18,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
     const parts = content.split(/(```[\s\S]*?```)/g);
 
     return (
-        <div className="space-y-2 text-xs">
+        <div className="space-y-2">
             {parts.map((part, index) => {
                 if (part.startsWith('```') && part.endsWith('```')) {
                     const content = part.slice(3, -3).trim();
@@ -25,7 +27,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
                     const code = match ? content.slice(match[0].length) : content;
                     
                     return (
-                        <div key={index} className="my-2 bg-[#1e1e1e] border border-[#333] rounded-md overflow-hidden font-mono group relative">
+                        <div key={index} className="my-2 bg-[#1e1e1e] border border-[#333] rounded-md overflow-hidden font-mono group relative text-xs">
                             {lang && <div className="px-2 py-1 bg-[#252525] text-[10px] text-[#888] border-b border-[#333]">{lang}</div>}
                             <div className="p-2 overflow-x-auto custom-scrollbar text-emerald-300 whitespace-pre">{code}</div>
                             <button 
@@ -95,19 +97,28 @@ const parseInline = (text: string): React.ReactNode[] => {
     });
 };
 
-
-export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, onAddWidget, onAddBookmark }) => {
+export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, onAddWidget, onAddBookmark, onAddWebApp, externalPrompt, onClearExternalPrompt }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  
-  // Image State
   const [pendingImage, setPendingImage] = useState<string | null>(null);
-  
+  const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (externalPrompt) {
+        setInput(externalPrompt);
+        if (onClearExternalPrompt) onClearExternalPrompt();
+        setTimeout(() => {
+             const inputEl = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
+             if(inputEl) inputEl.focus();
+        }, 100);
+    }
+  }, [externalPrompt, onClearExternalPrompt]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -117,10 +128,22 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
     scrollToBottom();
   }, [messages, isLoading, showSettings, pendingImage]);
 
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`;
+    }
+  }, [input]);
+
   const clearChat = () => {
       setMessages([]);
       historyRef.current = [];
       setPendingImage(null);
+      if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          setIsLoading(false);
+      }
   };
 
   const toolExecutors: ToolExecutors = {
@@ -135,14 +158,14 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
         }
 
         const newConfig: UniversalWidgetConfig = {
-            endpoint: args.endpoint || '', // Endpoint optional for custom widgets
+            endpoint: args.endpoint || '',
             jsonPath: args.jsonPath || '',
             label: args.title,
             method: 'GET',
             refreshInterval: args.refreshInterval || 10000,
             unit: args.unit,
             headers: parsedHeaders,
-            customCode: args.customCode // Store the AI generated code
+            customCode: args.customCode 
         };
         onAddWidget(WidgetType.UNIVERSAL, newConfig);
         return `Created widget "${args.title}"${args.customCode ? ' with custom code' : ''}`;
@@ -150,21 +173,25 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
     addBookmark: async (args) => {
         onAddBookmark(args.categoryName, args.title, args.url, args.iconUrl, args.categoryIconUrl);
         return `Added bookmark ${args.title} to ${args.categoryName}`;
+    },
+    addWebApp: async (args) => {
+        if (onAddWebApp) {
+            onAddWebApp(args);
+            return `Added Web App "${args.name}" to category "${args.category}"`;
+        }
+        return "Error: Web App creation not supported in this context.";
     }
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      
       const reader = new FileReader();
       reader.onloadend = () => {
-          if (typeof reader.result === 'string') {
-              setPendingImage(reader.result);
-          }
+          if (typeof reader.result === 'string') setPendingImage(reader.result);
       };
       reader.readAsDataURL(file);
-      e.target.value = ''; // Reset
+      e.target.value = '';
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
@@ -175,9 +202,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
               if (blob) {
                   const reader = new FileReader();
                   reader.onload = (event) => {
-                      if (typeof event.target?.result === 'string') {
-                          setPendingImage(event.target.result);
-                      }
+                      if (typeof event.target?.result === 'string') setPendingImage(event.target.result);
                   };
                   reader.readAsDataURL(blob);
                   e.preventDefault(); 
@@ -186,20 +211,28 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       }
   };
 
+  const handleStop = () => {
+      if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+          setIsLoading(false);
+      }
+  };
+
   const handleSend = async (retryText?: string, retryImage?: string) => {
+    if (isLoading) { handleStop(); return; }
+
     const textToSend = retryText || input;
     const imageToSend = retryImage || (pendingImage || undefined);
 
     if (!textToSend.trim() && !imageToSend) return;
-    if (isLoading) return;
+    
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     if (settings.provider === 'GEMINI' && !settings.geminiKey) {
         setMessages(p => [...p, { role: 'system', text: "Please set your Gemini API Key." }]);
-        setShowSettings(true);
-        return;
-    }
-    if ((settings.provider === 'OPENROUTER') && !settings.openRouterKey) {
-        setMessages(p => [...p, { role: 'system', text: "Please set your OpenRouter API Key." }]);
         setShowSettings(true);
         return;
     }
@@ -209,6 +242,9 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
     setInput('');
     setPendingImage(null); 
     setIsLoading(true);
+    
+    // Reset textarea height
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
     try {
       let responseText = "";
@@ -219,18 +255,18 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
 
       let res;
       const providers = {
-          'GEMINI': sendMessageGemini,
-          'OPENROUTER': (h:any, m:string, s:any, t:any, i:any) => sendMessageOpenAi(h, m, s, t, true, i),
-          'OPENAI': (h:any, m:string, s:any, t:any, i:any) => sendMessageOpenAi(h, m, s, t, false, i),
-          'OLLAMA': sendMessageOllama
+          'GEMINI': (h:any, m:string, s:any, t:any, i:any, sig:any) => sendMessageGemini(h, m, s, t, i, sig),
+          'OPENROUTER': (h:any, m:string, s:any, t:any, i:any, sig:any) => sendMessageOpenAi(h, m, s, t, true, i, sig),
+          'OPENAI': (h:any, m:string, s:any, t:any, i:any, sig:any) => sendMessageOpenAi(h, m, s, t, false, i, sig),
+          'OLLAMA': (h:any, m:string, s:any, t:any, i:any, sig:any) => sendMessageOllama(h, m, s, t, i, sig)
       };
       
       const selectedProvider = providers[settings.provider];
       if (selectedProvider) {
-          res = await selectedProvider(history, userMsg.text, settings, toolExecutors, imageToSend);
+          res = await selectedProvider(history, userMsg.text, settings, toolExecutors, imageToSend, controller.signal);
       }
       
-      if (res) {
+      if (res && !controller.signal.aborted) {
         responseText = res.text || " ";
         historyRef.current.push({ role: 'user', text: userMsg.text });
         historyRef.current.push({ role: 'model', text: responseText });
@@ -238,10 +274,15 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       }
       
     } catch (e: any) {
-      console.error(e);
-      setMessages(prev => [...prev, { role: 'model', text: `Error: ${e.message}` }]);
+      if (e.message !== 'Aborted by user' && e.message !== 'Request aborted' && !controller.signal.aborted) {
+          console.error(e);
+          setMessages(prev => [...prev, { role: 'model', text: `Error: ${e.message}` }]);
+      }
     } finally {
-      setIsLoading(false);
+      if (abortControllerRef.current === controller) {
+          setIsLoading(false);
+          abortControllerRef.current = null;
+      }
     }
   };
 
@@ -264,13 +305,18 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
     }
   };
 
-  const copyToClipboard = (text: string) => {
-      navigator.clipboard.writeText(text);
+  const copyToClipboard = (text: string) => navigator.clipboard.writeText(text);
+
+  const getMessageFontSize = () => {
+      switch(settings.chatFontSize) {
+          case 'small': return 'text-xs';
+          case 'large': return 'text-base';
+          default: return 'text-sm';
+      }
   };
 
   if (showSettings) {
-      // ... (Settings UI condensed for brevity)
-      return (
+       return (
           <div className="flex flex-col h-full bg-lrgex-bg p-4 overflow-y-auto custom-scrollbar">
               <div className="flex justify-between items-center mb-4 border-b border-lrgex-border pb-2">
                   <h3 className="font-bold text-lrgex-text flex items-center gap-2"><Settings size={16}/> AI Settings</h3>
@@ -278,6 +324,21 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
               </div>
 
               <div className="space-y-4 pb-10">
+                  <div>
+                      <label className="block text-xs text-lrgex-muted mb-2 flex items-center gap-1"><Type size={12}/> Text Size</label>
+                      <div className="flex bg-lrgex-panel border border-lrgex-border rounded overflow-hidden">
+                          {['small', 'medium', 'large'].map(size => (
+                              <button 
+                                key={size}
+                                onClick={() => onUpdateSettings({ ...settings, chatFontSize: size as any })}
+                                className={`flex-1 py-1 text-xs capitalize transition-colors ${settings.chatFontSize === size ? 'bg-lrgex-orange text-white' : 'text-lrgex-muted hover:bg-lrgex-hover'}`}
+                              >
+                                {size}
+                              </button>
+                          ))}
+                      </div>
+                  </div>
+
                   <div>
                       <label className="block text-xs text-lrgex-muted mb-2">Provider</label>
                       <div className="grid grid-cols-2 gap-2">
@@ -307,7 +368,6 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
                             </div>
                        </div>
                   )}
-
                   {settings.provider === 'OPENROUTER' && (
                        <div className="space-y-2 animate-in fade-in">
                             <div>
@@ -331,11 +391,10 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
                             </div>
                        </div>
                   )}
-
                   {settings.provider === 'OPENAI' && (
                        <div className="space-y-2 animate-in fade-in">
                             <div>
-                                <label className="block text-xs text-lrgex-muted mb-1">API Key (Optional if using custom URL)</label>
+                                <label className="block text-xs text-lrgex-muted mb-1">API Key</label>
                                 <input 
                                     type="password"
                                     className="w-full bg-lrgex-panel border border-lrgex-border rounded px-2 py-1 text-sm text-lrgex-text focus:border-lrgex-orange outline-none"
@@ -364,11 +423,10 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
                             </div>
                        </div>
                   )}
-
                   {settings.provider === 'OLLAMA' && (
                        <div className="space-y-2 animate-in fade-in">
                             <div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-300">
-                                Note: Ensure Ollama is running with <code>OLLAMA_ORIGINS="*"</code> to allow browser access.
+                                Note: Ensure Ollama is running with <code>OLLAMA_ORIGINS="*"</code>.
                             </div>
                             <div>
                                 <label className="block text-xs text-lrgex-muted mb-1">Ollama URL</label>
@@ -392,9 +450,10 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
                   )}
               </div>
           </div>
-      )
+      );
   }
 
+  // Render main chat interface
   return (
     <div className="flex flex-col h-full w-full min-h-0 bg-lrgex-panel/30">
       {/* Header Area */}
@@ -410,15 +469,14 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
             </span>
         </div>
         <div className="flex gap-2">
-             <button 
-                onClick={clearChat}
-                className="text-lrgex-muted hover:text-red-400 p-0.5"
-                title="Clear Chat History"
-            >
+             <button onClick={clearChat} className="text-lrgex-muted hover:text-red-400 p-0.5" title="Clear Chat History">
                 <Trash2 size={14} />
             </button>
             <button 
-                onClick={() => onUpdateSettings({...settings, mode: settings.mode === 'COMMANDER' ? 'ASSISTANT' : 'COMMANDER'})}
+                onClick={() => {
+                    onUpdateSettings({...settings, mode: settings.mode === 'COMMANDER' ? 'ASSISTANT' : 'COMMANDER'});
+                    clearChat();
+                }}
                 className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${settings.mode === 'COMMANDER' ? 'bg-lrgex-orange/20 border-lrgex-orange text-lrgex-orange' : 'bg-emerald-500/20 border-emerald-500 text-emerald-300'}`}
                 title={settings.mode === 'COMMANDER' ? "Switch to Safe Mode" : "Switch to Admin Mode"}
             >
@@ -431,7 +489,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 overflow-y-auto space-y-4 p-3 custom-scrollbar min-h-0">
+      <div className="flex-1 overflow-y-auto space-y-4 p-3 custom-scrollbar min-h-0 pb-2">
         {messages.length === 0 && (
             <div className="text-center text-lrgex-muted text-sm mt-8 px-4">
                 <Cpu className="mx-auto mb-3 opacity-50 text-lrgex-orange" size={32} />
@@ -454,7 +512,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
                     {msg.role === 'user' ? <User size={12} className="text-white"/> : <Bot size={12} className="text-lrgex-text"/>}
                 </div>
              )}
-            <div className={`rounded-lg p-2 text-xs max-w-[85%] flex flex-col gap-2 ${
+            <div className={`rounded-lg p-2 ${getMessageFontSize()} max-w-[85%] flex flex-col gap-2 ${
                 msg.role === 'user' ? 'bg-lrgex-orange text-white' : 
                 msg.role === 'system' ? 'bg-red-500/10 text-red-200 w-full text-center italic border border-red-500/20' :
                 'bg-lrgex-menu text-lrgex-text border border-lrgex-border relative'}`}>
@@ -469,24 +527,17 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
                   <div className="whitespace-pre-wrap">{msg.text}</div>
               )}
 
-              {msg.role === 'model' && (
-                  <div className="flex justify-end gap-2 pt-1 mt-1 border-t border-lrgex-border/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button 
-                        onClick={() => copyToClipboard(msg.text)} 
-                        className="p-1 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-white transition-colors"
-                        title="Copy Text"
-                      >
-                          <Copy size={10} />
-                      </button>
-                      <button 
-                        onClick={() => handleRetry(i)} 
-                        className="p-1 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-white transition-colors"
-                        title="Retry"
-                      >
+              {/* Action Buttons */}
+              <div className={`flex gap-2 pt-1 mt-1 border-t border-lrgex-border/30 opacity-0 group-hover:opacity-100 transition-opacity ${msg.role === 'user' ? 'justify-start border-white/20' : 'justify-end'}`}>
+                  <button onClick={() => copyToClipboard(msg.text)} className={`p-1 rounded transition-colors ${msg.role === 'user' ? 'hover:bg-white/20 text-white/70 hover:text-white' : 'hover:bg-lrgex-hover text-lrgex-muted hover:text-white'}`} title="Copy Text">
+                      <Copy size={10} />
+                  </button>
+                  {msg.role === 'model' && (
+                      <button onClick={() => handleRetry(i)} className="p-1 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-white transition-colors" title="Retry">
                           <RotateCcw size={10} />
                       </button>
-                  </div>
-              )}
+                  )}
+              </div>
             </div>
           </div>
         ))}
@@ -503,45 +554,43 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="p-3 bg-lrgex-menu/50 border-t border-lrgex-border shrink-0">
-        {pendingImage && (
-            <div className="mb-2 flex items-center gap-2 p-2 bg-lrgex-panel border border-lrgex-border rounded-lg w-fit">
-                <img src={pendingImage} alt="Preview" className="w-8 h-8 object-cover rounded" />
-                <span className="text-[10px] text-lrgex-muted">Image attached</span>
-                <button onClick={() => setPendingImage(null)} className="ml-2 text-lrgex-muted hover:text-red-400">
-                    <X size={12} />
+      {/* Floating Input Area */}
+      <div className="p-4 pt-0 shrink-0">
+        <div className="bg-lrgex-menu rounded-xl border border-lrgex-border shadow-2xl flex flex-col gap-2 p-2">
+            {pendingImage && (
+                <div className="flex items-center gap-2 p-2 bg-lrgex-panel border border-lrgex-border rounded-lg w-fit">
+                    <img src={pendingImage} alt="Preview" className="w-8 h-8 object-cover rounded" />
+                    <span className="text-[10px] text-lrgex-muted">Image attached</span>
+                    <button onClick={() => setPendingImage(null)} className="ml-2 text-lrgex-muted hover:text-red-400"><X size={12} /></button>
+                </div>
+            )}
+
+            <div className="flex items-end gap-2">
+                <label className="cursor-pointer p-2 hover:bg-lrgex-hover rounded-lg text-lrgex-muted hover:text-lrgex-orange transition-colors shrink-0 mb-0.5">
+                    <Paperclip size={18} />
+                    <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+                </label>
+
+                <textarea
+                    ref={textareaRef}
+                    className="flex-1 bg-transparent border-none focus:ring-0 text-sm px-2 py-2 text-lrgex-text placeholder-lrgex-muted outline-none resize-none max-h-48 custom-scrollbar"
+                    placeholder={settings.mode === 'COMMANDER' ? "Ask AI Commander..." : "Ask AI Assistant..."}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    rows={1}
+                    style={{ minHeight: '44px' }}
+                />
+                <button 
+                    onClick={() => handleSend()} 
+                    disabled={(!input.trim() && !pendingImage && !isLoading)}
+                    className={`p-2 rounded-lg text-white transition-all shrink-0 mb-0.5 shadow-sm ${isLoading ? 'bg-red-500 hover:bg-red-600' : 'bg-lrgex-orange hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed'}`}
+                    title={isLoading ? "Stop" : "Send"}
+                >
+                {isLoading ? <Square size={18} fill="currentColor" /> : <Send size={18} />}
                 </button>
             </div>
-        )}
-
-        <div className="flex items-center gap-2 bg-lrgex-menu p-1 rounded-lg border border-lrgex-border">
-            <label className="cursor-pointer p-1.5 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-lrgex-orange transition-colors">
-                <Paperclip size={14} />
-                <input 
-                    type="file" 
-                    accept="image/*" 
-                    className="hidden" 
-                    ref={fileInputRef}
-                    onChange={handleImageUpload}
-                />
-            </label>
-
-            <input
-                className="flex-1 bg-transparent border-none focus:ring-0 text-sm px-2 py-1 text-lrgex-text placeholder-lrgex-muted outline-none"
-                placeholder={settings.mode === 'COMMANDER' ? "e.g., 'Add calculator widget...'" : "Paste image or ask..."}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-            />
-            <button 
-                onClick={() => handleSend()} 
-                disabled={isLoading || (!input.trim() && !pendingImage)}
-                className="p-1.5 bg-lrgex-orange rounded-md text-white disabled:opacity-50 hover:bg-orange-600 transition-colors"
-            >
-            <Send size={14} />
-            </button>
         </div>
       </div>
     </div>

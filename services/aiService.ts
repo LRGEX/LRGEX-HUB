@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Chat, FunctionDeclaration, Type, Part } from "@google/genai";
 import { AiSettings, WidgetType } from "../types";
 
@@ -24,11 +23,11 @@ const addWidgetTool: FunctionDeclaration = {
 
 const addBookmarkTool: FunctionDeclaration = {
   name: "addBookmark",
-  description: "Add a website bookmark to a specific category.",
+  description: "Add a simple link bookmark to a specific link category.",
   parameters: {
     type: Type.OBJECT,
     properties: {
-      categoryName: { type: Type.STRING, description: "The name of the category." },
+      categoryName: { type: Type.STRING, description: "The name of the category group." },
       title: { type: Type.STRING, description: "The display title of the link." },
       url: { type: Type.STRING, description: "The URL of the bookmark." },
       iconUrl: { type: Type.STRING, description: "The URL of the icon png." },
@@ -38,11 +37,28 @@ const addBookmarkTool: FunctionDeclaration = {
   },
 };
 
+const addWebAppTool: FunctionDeclaration = {
+  name: "addWebApp",
+  description: "Add a Web Application to the 'Web Apps' section. These are card-style links with descriptions and categories (tabs).",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      name: { type: Type.STRING, description: "Name of the App (e.g. Portainer, Plex)" },
+      url: { type: Type.STRING, description: "URL to the app" },
+      description: { type: Type.STRING, description: "Short description of what the app does" },
+      category: { type: Type.STRING, description: "Category for the tab (e.g. Docker, Media, System)" },
+      iconUrl: { type: Type.STRING, description: "Icon URL (cdn or other)" }
+    },
+    required: ["name", "url", "category"]
+  }
+};
+
 // --- Service Interfaces ---
 
 export interface ToolExecutors {
   addWidget: (args: { title: string; endpoint?: string; jsonPath?: string; unit?: string; refreshInterval?: number; headers?: string; customCode?: string }) => Promise<string>;
   addBookmark: (args: { categoryName: string; title: string; url: string; iconUrl?: string; categoryIconUrl?: string }) => Promise<string>;
+  addWebApp: (args: { name: string; url: string; description?: string; category: string; iconUrl?: string }) => Promise<string>;
 }
 
 // --- Shared Helpers ---
@@ -68,11 +84,28 @@ const getSystemPrompt = (settings: AiSettings) => {
            - Ensure text scales or wraps correctly so no clipping occurs.
          - Example Return: \`return React.createElement('div', { className: 'w-full h-full flex items-center justify-center bg-slate-900 text-white' }, \`Size: \${Math.round(props.width)}x\${Math.round(props.height)}\`);\`
          
+         RULES FOR WEB APPS (NEW):
+         - Use 'addWebApp' when the user wants to add a service (e.g. Portainer, Plex).
+         - **BULK CREATION MANDATE**: If the user provides a list of multiple apps (e.g. "App Name: X, URL: Y... App Name: A, URL: B..."), you MUST call \`addWebApp\` separately for **EVERY SINGLE APP**. Do NOT summarize. Do NOT skip any.
+         - **Smart Inference**: If user gives "IP:Port" (e.g. "192.168.1.5:8989"):
+           1. **URL**: Automatically prepend 'http://' to IP addresses if missing.
+           2. **Category**: INFER the category based on the app's function.
+              - **Media**: Plex, Jellyfin, Sonarr, Radarr, Lidarr, Overseerr, Tautulli, Bazarr, Prowlarr.
+              - **Docker**: Portainer, Dockge, Watchtower.
+              - **Network/Security**: Pi-hole, AdGuard, Unifi, Nginx Proxy Manager, Cloudflare, Tailscale.
+              - **Home**: Home Assistant, Homebridge, Scrypted.
+              - **Downloads**: SABnzbd, qBittorrent, Transmission.
+              - **Monitoring**: Grafana, Prometheus, Uptime Kuma, Netdata.
+              - **Productivity/Other**: Nextcloud, Syncthing, Paperless, Homarr.
+              - **AI**: Ollama, Open WebUI, LocalAI.
+           3. **Icon**: Generate a CDN URL: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/{app-name-lowercase-kebab-case}.png".
+              - Example: "Home Assistant" -> "home-assistant.png"
+           4. **Description**: Generate a very short 4-5 word description (e.g. "Media Management" or "Docker Container GUI") if one isn't provided.
+
          RULES FOR BOOKMARKS:
-         1. **Categorize Intelligently**: Group items (e.g. "Media", "Development").
-         2. **Generate Icons**: ALWAYS generate an 'iconUrl' using: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/{kebab-case-name}.png".
-         3. **Service Name Formatting**: 'Proton Mail' -> 'proton-mail'.
-         4. **Category Icons**: ALWAYS generate a 'categoryIconUrl' using the icon of the most popular app in that category.
+         - Use 'addBookmark' for simple link lists.
+         - Categorize Intelligently.
+         - Generate Icons using the same CDN pattern as Web Apps.
          
          Output tool calls in the native format of the provider.`
       : "You are the LRGEX AI Assistant. You cannot modify the dashboard.";
@@ -96,7 +129,8 @@ export const sendMessageGemini = async (
   message: string,
   settings: AiSettings,
   tools: ToolExecutors,
-  image?: string
+  image?: string,
+  signal?: AbortSignal
 ): Promise<{ text: string; newHistory: any[] }> => {
   const ai = new GoogleGenAI({ apiKey: settings.geminiKey });
   
@@ -104,7 +138,7 @@ export const sendMessageGemini = async (
     ? { 
         tools: [
           { 
-            functionDeclarations: [addWidgetTool, addBookmarkTool],
+            functionDeclarations: [addWidgetTool, addBookmarkTool, addWebAppTool],
             googleSearch: {} 
           }
         ] 
@@ -149,9 +183,15 @@ export const sendMessageGemini = async (
         }
     }
 
+    if (signal?.aborted) throw new Error("Request aborted");
+
     let response = await chat.sendMessage(messagePayload);
     
+    if (signal?.aborted) throw new Error("Request aborted");
+
     while (response.functionCalls && response.functionCalls.length > 0) {
+      if (signal?.aborted) throw new Error("Request aborted");
+
       const functionCalls = response.functionCalls;
       const functionResponses = [];
 
@@ -161,6 +201,7 @@ export const sendMessageGemini = async (
         try {
           if (name === "addWidget" && tools.addWidget) result = await tools.addWidget(args as any);
           else if (name === "addBookmark" && tools.addBookmark) result = await tools.addBookmark(args as any);
+          else if (name === "addWebApp" && tools.addWebApp) result = await tools.addWebApp(args as any);
           else result = `Function ${name} not supported.`;
         } catch (err: any) {
           result = `Error: ${err.message}`;
@@ -169,8 +210,11 @@ export const sendMessageGemini = async (
       }
       
       const parts = functionResponses.map(fr => ({ functionResponse: fr }));
-      if (parts.length > 0) response = await chat.sendMessage({ message: parts });
-      else break; 
+      if (parts.length > 0) {
+          response = await chat.sendMessage({ message: parts });
+      } else {
+        break; 
+      }
     }
 
     let finalText = response.text || " ";
@@ -200,7 +244,8 @@ export const sendMessageOpenAi = async (
     settings: AiSettings,
     tools: ToolExecutors,
     isRouter: boolean = false,
-    image?: string
+    image?: string,
+    signal?: AbortSignal
   ): Promise<{ text: string; newHistory: any[] }> => {
     
     const apiKey = isRouter ? settings.openRouterKey : settings.openAiKey;
@@ -272,6 +317,24 @@ export const sendMessageOpenAi = async (
             required: ["categoryName", "title", "url"]
           }
         }
+      },
+      {
+        type: "function",
+        function: {
+          name: "addWebApp",
+          description: "Add a Web App",
+          parameters: {
+            type: "object",
+            properties: {
+                name: { type: "string" },
+                url: { type: "string" },
+                description: { type: "string" },
+                category: { type: "string" },
+                iconUrl: { type: "string" }
+            },
+            required: ["name", "url", "category"]
+          }
+        }
       }
     ] : undefined;
   
@@ -292,7 +355,8 @@ export const sendMessageOpenAi = async (
           model: model || (isRouter ? "meta-llama/llama-3-8b-instruct:free" : "gpt-4o"),
           messages: messages,
           tools: openAiTools,
-        })
+        }),
+        signal: signal
       });
   
       const data = await res.json();
@@ -305,12 +369,15 @@ export const sendMessageOpenAi = async (
         messages.push(msg);
   
         for (const toolCall of msg.tool_calls) {
+          if (signal?.aborted) throw new Error("Request aborted");
+          
           const fnName = toolCall.function.name;
           const args = JSON.parse(toolCall.function.arguments);
           let result = "";
   
           if (fnName === "addWidget" && tools.addWidget) result = await tools.addWidget(args);
           else if (fnName === "addBookmark" && tools.addBookmark) result = await tools.addBookmark(args);
+          else if (fnName === "addWebApp" && tools.addWebApp) result = await tools.addWebApp(args);
           else result = "Function not supported";
   
           messages.push({
@@ -327,7 +394,8 @@ export const sendMessageOpenAi = async (
           body: JSON.stringify({
             model: model,
             messages: messages,
-          })
+          }),
+          signal: signal
         });
         
         const followUpData = await followUpRes.json();
@@ -337,6 +405,9 @@ export const sendMessageOpenAi = async (
       return { text: msg.content, newHistory: [] };
   
     } catch (e: any) {
+      if (e.name === 'AbortError') {
+          throw new Error('Aborted by user');
+      }
       return { text: `${isRouter ? 'OpenRouter' : 'OpenAI'} Error: ${e.message}`, newHistory: [] };
     }
   };
@@ -348,7 +419,8 @@ export const sendMessageOllama = async (
     message: string,
     settings: AiSettings,
     tools: ToolExecutors,
-    image?: string
+    image?: string,
+    signal?: AbortSignal
   ): Promise<{ text: string; newHistory: any[] }> => {
     
     const baseUrl = settings.ollamaUrl || "http://localhost:11434";
@@ -362,5 +434,5 @@ export const sendMessageOllama = async (
         openAiUrl: compatUrl
     };
 
-    return sendMessageOpenAi(history, message, tempSettings, tools, false, image);
+    return sendMessageOpenAi(history, message, tempSettings, tools, false, image, signal);
 };

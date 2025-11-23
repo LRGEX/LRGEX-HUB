@@ -1,4 +1,3 @@
-
 import { AppData } from '../types';
 
 // --- Server API Helpers ---
@@ -32,7 +31,7 @@ export const saveBackupToServer = async (data: AppData): Promise<{ success: bool
 export const getServerBackups = async (): Promise<ServerBackupFile[]> => {
     try {
         const response = await fetch('/api/backups');
-        if (!response.ok) throw new Error('Failed to fetch backups list');
+        if (!response.ok) throw new Error(`Failed to fetch backups list: ${response.status}`);
         return await response.json();
     } catch (error) {
         console.error("Failed to list server backups:", error);
