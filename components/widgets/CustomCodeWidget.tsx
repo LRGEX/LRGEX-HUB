@@ -160,9 +160,9 @@ const InnerCustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customDa
                     renderCount.current = 1;
                     lastRenderTime.current = now;
                 } else {
-                    // Relaxed settings requested by user (5000 renders/sec).
+                    // Relaxed settings requested by user (170 renders/sec).
                     // This practically disables the check for animations but still catches massive infinite loops.
-                    if (renderCount.current > 5000) {
+                    if (renderCount.current > 170) {
                         throw new Error("Infinite Render Loop Detected: The widget is updating its state too frequently.");
                     }
                 }
