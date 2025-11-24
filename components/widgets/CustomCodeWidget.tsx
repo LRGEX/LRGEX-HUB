@@ -7,15 +7,16 @@ interface CustomCodeWidgetProps {
     code: string;
     customData: Record<string, any>;
     onSetCustomData: (data: Record<string, any>) => void;
-    onReportError?: (error: string) => void;
+    onReportError?: (error: string, code?: string) => void;
     width?: number;
     height?: number;
 }
 
 interface ErrorBoundaryProps {
-    onReportError?: (error: string) => void;
+    onReportError?: (error: string, code?: string) => void;
     children?: ReactNode;
     codeHash: string;
+    code: string; // Added to pass code context
 }
 
 interface ErrorBoundaryState {
@@ -50,7 +51,7 @@ class WidgetErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBound
 
     render() {
         if (this.state.hasError) {
-            const { onReportError } = this.props;
+            const { onReportError, code } = this.props;
             return (
                 <div className="absolute inset-0 p-3 text-red-400 text-xs border border-red-500/30 bg-slate-950 rounded flex flex-col gap-2 overflow-hidden z-50 shadow-2xl">
                     <div className="flex items-center gap-2 text-red-500 font-bold border-b border-red-500/20 pb-2 shrink-0">
@@ -62,7 +63,7 @@ class WidgetErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBound
                     </div>
                     {onReportError && (
                         <button 
-                            onClick={() => onReportError(this.state.errorMsg)}
+                            onClick={() => onReportError(this.state.errorMsg, code)}
                             className="flex items-center justify-center gap-2 bg-lrgex-orange text-white px-3 py-2 rounded text-xs w-full hover:bg-orange-600 transition-colors shrink-0 font-bold shadow-lg shadow-orange-900/20"
                         >
                             <Bot size={14} /> Fix with AI
@@ -170,7 +171,7 @@ const InnerCustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customDa
                     </div>
                     {onReportError && (
                         <button 
-                            onClick={() => onReportError(err.message)}
+                            onClick={() => onReportError(err.message, code)}
                             className="flex items-center gap-2 bg-lrgex-orange text-white px-3 py-1.5 rounded text-xs w-fit hover:bg-orange-600 transition-colors mt-2 font-bold"
                         >
                             <Bot size={14} /> Ask AI to Fix
@@ -221,7 +222,7 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = (props) => {
     return (
         <div ref={containerRef} className="w-full h-full custom-code-container relative overflow-hidden">
              {dimensions.width > 0 && (
-                <WidgetErrorBoundary onReportError={props.onReportError} codeHash={props.code}>
+                <WidgetErrorBoundary onReportError={props.onReportError} codeHash={props.code} code={props.code}>
                     <InnerCustomCodeWidget 
                         {...props} 
                         width={dimensions.width} 

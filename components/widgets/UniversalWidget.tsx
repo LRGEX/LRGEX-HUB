@@ -22,7 +22,7 @@ interface UniversalWidgetProps {
   config?: UniversalWidgetConfig;
   onUpdate?: (newConfig: UniversalWidgetConfig) => void;
   onSaveTemplate?: (config: UniversalWidgetConfig) => void;
-  onReportError?: (error: string) => void;
+  onReportError?: (error: string, code?: string) => void;
   editMode?: boolean;
 }
 

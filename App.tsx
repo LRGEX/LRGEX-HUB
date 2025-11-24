@@ -286,8 +286,14 @@ const App: React.FC = () => {
 
   // --- Actions ---
 
-  const reportWidgetError = useCallback((error: string) => {
-      setAiPromptOverride(`I'm getting this error with the custom widget code:\n\n${error}\n\nFix it and recreate the widget.`);
+  const reportWidgetError = useCallback((error: string, code?: string) => {
+      let prompt = `I'm getting this error with the custom widget code:\n\n${error}\n\n`;
+      if (code) {
+          prompt += `Here is the current code:\n\n\`\`\`javascript\n${code}\n\`\`\`\n\n`;
+      }
+      prompt += `Fix it and recreate the widget.`;
+      
+      setAiPromptOverride(prompt);
       setSidebarOpen(true);
   }, []);
 

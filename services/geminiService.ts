@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Chat, FunctionDeclaration, Type, Part } from "@google/genai";
 import { AiSettings, WidgetType } from "../types";
 
@@ -92,7 +91,7 @@ export const sendMessageGemini = async (
     // STRICT VALIDATION: Ensure we never send empty string/undefined to sendMessage
     const safeMessage = message && message.trim().length > 0 ? message : " ";
     
-    let response = await chat.sendMessage(safeMessage);
+    let response = await chat.sendMessage({ message: safeMessage });
     
     // 2. Handle Function Calls loop
     while (response.functionCalls && response.functionCalls.length > 0) {
@@ -128,7 +127,7 @@ export const sendMessageGemini = async (
       const parts = functionResponses.map(fr => ({ functionResponse: fr }));
       
       if (parts.length > 0) {
-        response = await chat.sendMessage(parts);
+        response = await chat.sendMessage({ message: parts });
       } else {
         break; 
       }

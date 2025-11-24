@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { sendMessageGemini, sendMessageOpenAi, sendMessageOllama, ToolExecutors } from '../../services/aiService';
 import { ChatMessage, AiSettings, UniversalWidgetConfig, WidgetType } from '../../types';
@@ -13,12 +14,65 @@ interface AiWidgetProps {
   onClearExternalPrompt?: () => void;
 }
 
+// --- Copy Helper ---
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+    try {
+        await navigator.clipboard.writeText(text);
+        return true;
+    } catch (err) {
+        // Fallback for non-secure contexts or older browsers
+        try {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            
+            // Ensure it's not visible but part of DOM
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            textArea.style.top = "0";
+            document.body.appendChild(textArea);
+            
+            textArea.focus();
+            textArea.select();
+            
+            const successful = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            return successful;
+        } catch (err) {
+            console.error('Fallback copy failed', err);
+            return false;
+        }
+    }
+};
+
+const CopyButton: React.FC<{ text: string; className?: string; size?: number }> = ({ text, className, size = 12 }) => {
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        const success = await copyTextToClipboard(text);
+        if (success) {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }
+    };
+
+    return (
+        <button 
+            onClick={handleCopy}
+            className={className}
+            title={copied ? "Copied!" : "Copy"}
+        >
+            {copied ? <Check size={size} className="text-emerald-400" /> : <Copy size={size} />}
+        </button>
+    );
+};
+
 // --- Simple Markdown Renderer (Zero-Dependency) ---
 const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
     const parts = content.split(/(```[\s\S]*?```)/g);
 
     return (
-        <div className="space-y-2">
+        <div className="space-y-2 min-w-0">
             {parts.map((part, index) => {
                 if (part.startsWith('```') && part.endsWith('```')) {
                     const content = part.slice(3, -3).trim();
@@ -30,19 +84,18 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
                         <div key={index} className="my-2 bg-[#1e1e1e] border border-[#333] rounded-md overflow-hidden font-mono group relative text-xs">
                             {lang && <div className="px-2 py-1 bg-[#252525] text-[10px] text-[#888] border-b border-[#333]">{lang}</div>}
                             <div className="p-2 overflow-x-auto custom-scrollbar text-emerald-300 whitespace-pre">{code}</div>
-                            <button 
-                                onClick={() => navigator.clipboard.writeText(code)}
-                                className="absolute top-2 right-2 p-1 bg-lrgex-panel/50 hover:bg-lrgex-orange text-lrgex-muted hover:text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Copy Code"
-                            >
-                                <Copy size={12} />
-                            </button>
+                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <CopyButton 
+                                    text={code} 
+                                    className="p-1 bg-lrgex-panel/80 hover:bg-lrgex-orange text-lrgex-muted hover:text-white rounded transition-colors" 
+                                />
+                            </div>
                         </div>
                     );
                 }
 
                 return (
-                    <div key={index} className="whitespace-pre-wrap leading-relaxed">
+                    <div key={index} className="whitespace-pre-wrap leading-relaxed break-words">
                          {part.split('\n').map((line, i) => {
                              if (line.startsWith('### ')) return <h4 key={i} className="font-bold text-sm text-lrgex-orange mt-2 mb-1">{parseInline(line.slice(4))}</h4>;
                              if (line.startsWith('## ')) return <h3 key={i} className="font-bold text-sm text-lrgex-text mt-3 mb-1">{parseInline(line.slice(3))}</h3>;
@@ -87,11 +140,11 @@ const parseInline = (text: string): React.ReactNode[] => {
             return <strong key={i} className="font-bold text-white">{part.slice(2, -2)}</strong>;
         }
         if (part.startsWith('`') && part.endsWith('`')) {
-            return <code key={i} className="bg-lrgex-bg border border-lrgex-border px-1 rounded text-lrgex-orange font-mono text-[10px]">{part.slice(1, -1)}</code>;
+            return <code key={i} className="bg-lrgex-bg border border-lrgex-border px-1 rounded text-lrgex-orange font-mono text-[10px] break-all">{part.slice(1, -1)}</code>;
         }
         const linkMatch = part.match(/^\[(.*?)\]\((.*?)\)$/);
         if (linkMatch) {
-            return <a key={i} href={linkMatch[2]} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{linkMatch[1]}</a>;
+            return <a key={i} href={linkMatch[2]} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline break-all">{linkMatch[1]}</a>;
         }
         return part;
     });
@@ -304,8 +357,6 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       handleSend();
     }
   };
-
-  const copyToClipboard = (text: string) => navigator.clipboard.writeText(text);
 
   const getMessageFontSize = () => {
       switch(settings.chatFontSize) {
@@ -529,9 +580,12 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
 
               {/* Action Buttons */}
               <div className={`flex gap-2 pt-1 mt-1 border-t border-lrgex-border/30 opacity-0 group-hover:opacity-100 transition-opacity ${msg.role === 'user' ? 'justify-start border-white/20' : 'justify-end'}`}>
-                  <button onClick={() => copyToClipboard(msg.text)} className={`p-1 rounded transition-colors ${msg.role === 'user' ? 'hover:bg-white/20 text-white/70 hover:text-white' : 'hover:bg-lrgex-hover text-lrgex-muted hover:text-white'}`} title="Copy Text">
-                      <Copy size={10} />
-                  </button>
+                  <CopyButton 
+                    text={msg.text} 
+                    size={10}
+                    className={`p-1 rounded transition-colors ${msg.role === 'user' ? 'hover:bg-white/20 text-white/70 hover:text-white' : 'hover:bg-lrgex-hover text-lrgex-muted hover:text-white'}`}
+                  />
+                  
                   {msg.role === 'model' && (
                       <button onClick={() => handleRetry(i)} className="p-1 hover:bg-lrgex-hover rounded text-lrgex-muted hover:text-white transition-colors" title="Retry">
                           <RotateCcw size={10} />
