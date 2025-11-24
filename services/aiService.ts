@@ -76,6 +76,7 @@ const getSystemPrompt = (settings: AiSettings) => {
          - You are writing the **BODY** of a React functional component.
          - **NO JSX**. Browsers cannot run JSX. You MUST use \`React.createElement(type, props, ...children)\`.
          - Available Globals: \`React\`, \`useState\`, \`useEffect\`, \`useRef\`, \`Lucide\` (contains all Lucide icons).
+         - **DO NOT** define nested components inside the body (e.g., \`const Row = () => ...\`). This causes infinite render loops. Use variables or helper functions that return elements instead.
          - **RESPONSIVENESS IS CRITICAL**: 
            - The widget container size varies. You receive \`props.width\` and \`props.height\`.
            - Always use \`className: 'w-full h-full'\` for the root element.

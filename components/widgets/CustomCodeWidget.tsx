@@ -1,6 +1,7 @@
+
 import React, { Component, useEffect, useState, useRef, useMemo, ReactNode } from 'react';
 import * as LucideIcons from 'lucide-react';
-import { AlertTriangle, Bot } from 'lucide-react';
+import { AlertTriangle, Bot, Ban } from 'lucide-react';
 
 interface CustomCodeWidgetProps {
     code: string;
@@ -14,6 +15,7 @@ interface CustomCodeWidgetProps {
 interface ErrorBoundaryProps {
     onReportError?: (error: string) => void;
     children?: ReactNode;
+    codeHash: string; // Used to reset error state when code changes
 }
 
 interface ErrorBoundaryState {
@@ -39,19 +41,29 @@ class WidgetErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
         console.error("WidgetErrorBoundary caught an error", error, errorInfo);
     }
 
+    // Reset error state if the code (codeHash) changes
+    componentDidUpdate(prevProps: ErrorBoundaryProps) {
+        if (prevProps.codeHash !== this.props.codeHash) {
+            this.setState({ hasError: false, errorMsg: '' });
+        }
+    }
+
     render() {
         if (this.state.hasError) {
             const { onReportError } = this.props;
             return (
-                <div className="p-2 text-red-400 text-xs border border-red-500/20 bg-red-500/10 rounded h-full overflow-auto flex flex-col gap-2">
-                    <div>
-                        <strong>Render Error:</strong>
-                        <pre className="mt-1 whitespace-pre-wrap">{this.state.errorMsg}</pre>
+                <div className="absolute inset-0 p-2 text-red-400 text-xs border border-red-500/20 bg-slate-950/90 rounded flex flex-col gap-2 overflow-hidden z-50">
+                    <div className="flex items-center gap-2 text-red-500 font-bold border-b border-red-500/20 pb-1 shrink-0">
+                        <Ban size={14} />
+                        <span>Widget Crashed</span>
+                    </div>
+                    <div className="font-mono text-[10px] opacity-80 whitespace-pre-wrap break-words flex-1 overflow-y-auto custom-scrollbar">
+                        {this.state.errorMsg}
                     </div>
                     {onReportError && (
                         <button 
                             onClick={() => onReportError(this.state.errorMsg)}
-                            className="flex items-center gap-1 bg-lrgex-orange text-white px-2 py-1 rounded text-[10px] w-fit hover:bg-orange-600 transition-colors"
+                            className="flex items-center justify-center gap-1 bg-lrgex-orange text-white px-2 py-1.5 rounded text-[10px] w-full hover:bg-orange-600 transition-colors shrink-0 font-bold"
                         >
                             <Bot size={12} /> Fix with AI
                         </button>
@@ -72,12 +84,11 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
             url,
             method: options.method || 'GET',
             headers: options.headers || {},
-            body: options.body // Pass as is, don't double stringify. The server will handle it.
+            body: options.body // Pass as is, don't double stringify.
         })
     });
     
     if (!response.ok) {
-        // Robustly handle error reading
         try {
             const text = await response.text();
             try {
@@ -88,16 +99,12 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
                 throw new Error(`Proxy Error (${response.status}): ${text}`);
             }
         } catch (readErr: any) {
-             // Fallback if reading body fails (e.g. double read)
              throw new Error(`Proxy Error (${response.status}) - Could not read details`);
         }
     }
 
-    // Polyfill for Set-Cookie reading in browser
-    // The server copies Set-Cookie to X-Set-Cookie so JS can read it
     const xSetCookie = response.headers.get('X-Set-Cookie');
     if (xSetCookie) {
-        // We create a proxy around the headers to intercept 'get' calls for 'set-cookie'
         const originalHeaders = response.headers;
         Object.defineProperty(response, 'headers', {
             value: {
@@ -106,7 +113,6 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
                     return originalHeaders.get(name);
                 },
                 forEach: (callback: any, thisArg: any) => originalHeaders.forEach(callback, thisArg),
-                // Add other Header methods if needed, but 'get' is the critical one for widgets
             }
         });
     }
@@ -114,14 +120,34 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
     return response;
 };
 
+// Component to guard against infinite render loops
+const RenderGuard: React.FC<{ children: ReactNode }> = ({ children }) => {
+    const renderCount = useRef(0);
+    const lastRenderTime = useRef(Date.now());
+
+    // Logic: If we render more than 25 times in 1 second (humanly impossible for valid UI updates), kill it.
+    // Lowered from 50 to catch loops faster.
+    renderCount.current++;
+    const now = Date.now();
+    
+    if (now - lastRenderTime.current > 1000) {
+        renderCount.current = 1;
+        lastRenderTime.current = now;
+    } else {
+        if (renderCount.current > 25) {
+            throw new Error("Infinite Render Loop Detected. Widget stopped for safety.");
+        }
+    }
+
+    return <>{children}</>;
+};
+
 export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customData, onSetCustomData, onReportError }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
-    // Track container size for responsive logic
     useEffect(() => {
         if (!containerRef.current) return;
-
         const observer = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 setDimensions({
@@ -130,19 +156,14 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, custom
                 });
             }
         });
-
         observer.observe(containerRef.current);
         return () => observer.disconnect();
     }, []);
 
-    // Safe execution engine for "Headless" React Components
     const GeneratedComponent = useMemo(() => {
         try {
             if (!code || !code.trim()) return null;
 
-            // Construct the function body. 
-            // We expose React, hooks, Lucide icons, PROPS, and proxyFetch to the scope.
-            // The code string is expected to be the BODY of a function, returning React.createElement(...)
             const func = new Function(
                 'React', 
                 'useState', 
@@ -150,26 +171,27 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, custom
                 'useRef', 
                 'Lucide', 
                 'props',
-                'proxyFetch', // Inject Proxy Fetcher
+                'proxyFetch',
                 code
             );
 
-            // Return a wrapper component that executes the function
             return (componentProps: any) => {
                 try {
+                    // We execute the user's code here.
+                    // If the body throws (syntax error, logic error), catch it immediately
+                    // so the ErrorBoundary above handles it.
                     return func(React, useState, useEffect, useRef, LucideIcons, componentProps, proxyFetch);
                 } catch (err: any) {
-                    // Logic errors during execution (before render)
-                    throw new Error(err.message); 
+                    throw err; // Propagate to ErrorBoundary
                 }
             };
         } catch (err: any) {
-            console.error("Custom Code Compilation Error:", err);
+            // Compilation error (SyntaxError in code string)
             return () => (
                 <div className="p-2 text-red-400 text-xs border border-red-500/20 bg-red-500/10 rounded h-full overflow-auto flex flex-col gap-2">
                     <div>
                         <strong>Compilation Error:</strong>
-                        <pre className="mt-1 whitespace-pre-wrap">{err.message}</pre>
+                        <pre className="mt-1 whitespace-pre-wrap font-mono">{err.message}</pre>
                     </div>
                     {onReportError && (
                         <button 
@@ -195,15 +217,16 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, custom
 
     return (
         <div ref={containerRef} className="w-full h-full custom-code-container relative overflow-hidden">
-             {/* Only render if we have dimensions to prevent initial 0-size glitches */}
              {dimensions.width > 0 && (
-                <WidgetErrorBoundary onReportError={onReportError}>
-                    <GeneratedComponent 
-                        width={dimensions.width} 
-                        height={dimensions.height} 
-                        customData={customData || {}}
-                        setCustomData={onSetCustomData}
-                    />
+                <WidgetErrorBoundary onReportError={onReportError} codeHash={code.length + code.substring(0, 20)}>
+                    <RenderGuard>
+                        <GeneratedComponent 
+                            width={dimensions.width} 
+                            height={dimensions.height} 
+                            customData={customData || {}}
+                            setCustomData={onSetCustomData}
+                        />
+                    </RenderGuard>
                 </WidgetErrorBoundary>
              )}
         </div>
