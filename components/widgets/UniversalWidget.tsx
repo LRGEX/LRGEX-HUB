@@ -63,16 +63,41 @@ export const UniversalWidget: React.FC<UniversalWidgetProps> = ({ config, onUpda
       setLoading(true);
       setError(null);
       
+      // Helper for fetching
+      const performFetch = async (url: string, options: RequestInit) => {
+          const res = await fetch(url, options);
+          if (!res.ok) throw new Error(`Status: ${res.status}`);
+          return await res.json();
+      };
+
       try {
-        const res = await fetch(config.endpoint, {
-          method: config.method || 'GET',
-          headers: config.headers,
-          signal
-        });
+        let json;
+        try {
+            // Try Direct Fetch first
+            json = await performFetch(config.endpoint, {
+                method: config.method || 'GET',
+                headers: config.headers,
+                signal
+            });
+        } catch (directErr: any) {
+            if (signal.aborted) throw directErr;
+            console.log("Direct fetch failed, trying proxy...", directErr.message);
+            
+            // Try Proxy Fetch
+            const proxyRes = await fetch('/api/proxy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: config.endpoint,
+                    method: config.method || 'GET',
+                    headers: config.headers
+                }),
+                signal
+            });
+            if (!proxyRes.ok) throw new Error(`Proxy Failed: ${proxyRes.status}`);
+            json = await proxyRes.json();
+        }
         
-        if (!res.ok) throw new Error(`Status: ${res.status}`);
-        
-        const json = await res.json();
         const extracted = getNestedValue(json, config.jsonPath);
         
         if (!signal.aborted) {
@@ -295,8 +320,6 @@ export const UniversalWidget: React.FC<UniversalWidgetProps> = ({ config, onUpda
             )}
         </div>
         
-        {/* Status Indicator (Only visible in Edit Mode now, to keep View mode clean?) */}
-        {/* Actually, users might want to see error dots in View Mode. Let's keep it, but move it to bottom right absolute */}
         {!showEdit && !hasCustomCode && (
             <div className="absolute bottom-2 right-2 flex justify-between items-center z-10 pointer-events-none">
                 <div className={`w-2 h-2 rounded-full shadow-sm ${error ? 'bg-red-500' : 'bg-lrgex-orange/50'} ${loading ? 'animate-pulse' : ''}`} title={error || 'Active'} />

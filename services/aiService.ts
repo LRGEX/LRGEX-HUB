@@ -81,6 +81,12 @@ const getSystemPrompt = (settings: AiSettings) => {
            - Always use \`className: 'w-full h-full'\` for the root element.
            - Use Flexbox/Grid to center content.
          
+         **CRITICAL: CORS AND FETCHING**:
+         - Standard \`fetch\` will fail for most local services (Proxmox, Sonarr, etc.) due to CORS.
+         - **ALWAYS USE \`proxyFetch(url, options)\` instead of \`fetch\`**.
+         - \`proxyFetch\` has the same signature as \`fetch\` but routes through the server.
+         - Example: \`await proxyFetch('http://192.168.1.5:8989/api/v3/queue', { headers: { 'X-Api-Key': '...' } })\`.
+         
          **CRITICAL: CONFIGURATION PERSISTENCE**:
          - Standard \`useState\` is volatile and resets on page reload.
          - **For Configuration (API Keys, URLs, Usernames)**: YOU MUST USE \`props.customData\` and \`props.setCustomData\`.
@@ -118,7 +124,8 @@ const getSystemPrompt = (settings: AiSettings) => {
          }
 
          // 4. Render Main Widget (using config.url, config.apiKey)
-         // ... fetch logic using config.url ...
+         // Use proxyFetch to bypass CORS
+         // ... logic ...
          \`\`\`
          
          RULES FOR WEB APPS:

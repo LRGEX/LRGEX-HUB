@@ -135,6 +135,50 @@ api.get('/backups/:filename', (req, res) => {
     });
 });
 
+// POST /api/proxy - Bypass CORS
+api.post('/proxy', async (req, res) => {
+    const { url, method = 'GET', headers = {}, body } = req.body;
+
+    if (!url) {
+        return res.status(400).json({ error: 'Missing target URL' });
+    }
+
+    try {
+        console.log(`[Proxy] ${method} ${url}`);
+        
+        // Forward the request
+        const response = await fetch(url, {
+            method,
+            headers: {
+                ...headers,
+                // Avoid host header conflicts
+                host: undefined, 
+                'content-length': undefined
+            },
+            body: body ? JSON.stringify(body) : undefined
+        });
+
+        const contentType = response.headers.get('content-type');
+        const responseText = await response.text();
+
+        // Forward status
+        res.status(response.status);
+        
+        // Try to return JSON if possible
+        try {
+            const json = JSON.parse(responseText);
+            res.json(json);
+        } catch (e) {
+            // Fallback to text
+            res.send(responseText);
+        }
+
+    } catch (error) {
+        console.error(`[Proxy Error] ${error.message}`);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Mount API Router
 app.use('/api', api);
 

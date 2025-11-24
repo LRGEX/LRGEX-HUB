@@ -62,6 +62,26 @@ class WidgetErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBound
     }
 }
 
+// Helper function for Proxy Fetching
+const proxyFetch = async (url: string, options: RequestInit = {}) => {
+    const response = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            url,
+            method: options.method || 'GET',
+            headers: options.headers || {},
+            body: options.body ? JSON.parse(options.body as string) : undefined
+        })
+    });
+    
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Proxy Error (${response.status}): ${text}`);
+    }
+    return response;
+};
+
 export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customData, onSetCustomData, onReportError }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -89,7 +109,7 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, custom
             if (!code || !code.trim()) return null;
 
             // Construct the function body. 
-            // We expose React, hooks, Lucide icons, and PROPS to the scope.
+            // We expose React, hooks, Lucide icons, PROPS, and proxyFetch to the scope.
             // The code string is expected to be the BODY of a function, returning React.createElement(...)
             const func = new Function(
                 'React', 
@@ -98,13 +118,14 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, custom
                 'useRef', 
                 'Lucide', 
                 'props',
+                'proxyFetch', // Inject Proxy Fetcher
                 code
             );
 
             // Return a wrapper component that executes the function
             return (componentProps: any) => {
                 try {
-                    return func(React, useState, useEffect, useRef, LucideIcons, componentProps);
+                    return func(React, useState, useEffect, useRef, LucideIcons, componentProps, proxyFetch);
                 } catch (err: any) {
                     // Logic errors during execution (before render)
                     throw new Error(err.message); 
