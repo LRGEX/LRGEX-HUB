@@ -1,6 +1,10 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+
+// Disable SSL validation to allow connecting to self-signed certs (Proxmox, Portainer, etc.)
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -201,10 +205,19 @@ api.post('/proxy', async (req, res) => {
             console.warn(`[Proxy Remote Error] Status: ${response.status} from ${url}`);
         }
 
+        // Forward Response Headers (Critical for Auth/Cookies)
+        response.headers.forEach((val, key) => {
+            // Skip headers that might conflict with Node/Express response handling
+            if (['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(key.toLowerCase())) {
+                return;
+            }
+            res.setHeader(key, val);
+        });
+
         // Forward status
         res.status(response.status);
         
-        // Try to return JSON if possible
+        // Try to return JSON if possible (and if not already handled by setHeader content-type)
         try {
             const json = JSON.parse(responseText);
             res.json(json);
@@ -215,7 +228,9 @@ api.post('/proxy', async (req, res) => {
 
     } catch (error) {
         console.error(`[Proxy Internal Error] ${error.message}`, error);
-        res.status(500).json({ error: error.message });
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message });
+        }
     }
 });
 
