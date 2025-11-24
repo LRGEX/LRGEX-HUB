@@ -147,8 +147,9 @@ api.post('/proxy', async (req, res) => {
         console.log(`[Proxy Request] ${method} ${url}`);
         
         // Validate URL
+        let targetUrlObj;
         try {
-            new URL(url);
+            targetUrlObj = new URL(url);
         } catch (e) {
             console.error(`[Proxy] Invalid URL provided: ${url}`);
             return res.status(400).json({ error: 'Invalid URL format' });
@@ -164,6 +165,14 @@ api.post('/proxy', async (req, res) => {
         const safeHeaders = { ...headers };
         const restrictedHeaders = ['host', 'content-length', 'connection'];
         restrictedHeaders.forEach(h => delete safeHeaders[h]);
+
+        // Auto-Inject Origin/Referer if missing to bypass strict CSRF checks (Proxmox, qBittorrent, etc.)
+        if (!safeHeaders['Origin'] && !safeHeaders['origin']) {
+            safeHeaders['Origin'] = targetUrlObj.origin;
+        }
+        if (!safeHeaders['Referer'] && !safeHeaders['referer']) {
+            safeHeaders['Referer'] = targetUrlObj.origin + '/';
+        }
 
         // Forward the request
         let response;

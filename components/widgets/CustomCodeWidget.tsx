@@ -78,16 +78,16 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
     });
     
     if (!response.ok) {
-        // Try to parse as JSON error from our proxy first
+        // Robustly handle error reading
+        const text = await response.text();
         try {
-            const errorJson = await response.json();
+            const errorJson = JSON.parse(text);
             throw new Error(errorJson.details || errorJson.error || `Proxy Error (${response.status})`);
         } catch (e: any) {
-            // Fallback to text
-            // If the error we caught was the one we threw above, rethrow it
-            if (e.message.includes('Proxy Error')) throw e;
+            // If the error thrown was the one above, rethrow
+            if (e.message && e.message.includes('Proxy Error')) throw e;
             
-            const text = await response.text();
+            // Otherwise it was a JSON parse error, meaning the server sent back raw text (HTML or plain text error)
             throw new Error(`Proxy Error (${response.status}): ${text}`);
         }
     }
