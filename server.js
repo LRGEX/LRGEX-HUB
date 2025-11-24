@@ -154,19 +154,24 @@ api.post('/proxy', async (req, res) => {
             return res.status(400).json({ error: 'Invalid URL format' });
         }
 
+        // Prepare Body: Pass string as string, stringify object
+        let fetchBody = body;
+        if (body && typeof body === 'object') {
+            fetchBody = JSON.stringify(body);
+        }
+
+        // Prepare Headers: Clean restricted headers
+        const safeHeaders = { ...headers };
+        const restrictedHeaders = ['host', 'content-length', 'connection'];
+        restrictedHeaders.forEach(h => delete safeHeaders[h]);
+
         // Forward the request
-        // We wrap fetch in a try/catch to handle network errors (DNS, Connection Refused) specifically
         let response;
         try {
             response = await fetch(url, {
                 method,
-                headers: {
-                    ...headers,
-                    // Avoid host header conflicts and issues with content-length mismatch
-                    host: undefined, 
-                    'content-length': undefined
-                },
-                body: body ? JSON.stringify(body) : undefined
+                headers: safeHeaders,
+                body: fetchBody
             });
         } catch (networkError) {
             console.error(`[Proxy Network Fail] ${url}`, networkError);

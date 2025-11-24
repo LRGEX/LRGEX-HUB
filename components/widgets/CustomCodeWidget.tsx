@@ -73,7 +73,7 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
             url,
             method: options.method || 'GET',
             headers: options.headers || {},
-            body: options.body ? JSON.stringify(options.body) : undefined
+            body: options.body // Pass as is, don't double stringify. The server will handle it.
         })
     });
     
