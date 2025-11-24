@@ -10,13 +10,15 @@ interface CustomCodeWidgetProps {
     onReportError?: (error: string, code?: string) => void;
     width?: number;
     height?: number;
+    title?: string;
 }
 
 interface ErrorBoundaryProps {
     onReportError?: (error: string, code?: string) => void;
     children?: ReactNode;
     codeHash: string;
-    code: string; // Added to pass code context
+    code: string;
+    title?: string;
 }
 
 interface ErrorBoundaryState {
@@ -51,23 +53,33 @@ class WidgetErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBound
 
     render() {
         if (this.state.hasError) {
-            const { onReportError, code } = this.props;
+            const { onReportError, code, title } = this.props;
             return (
                 <div className="absolute inset-0 p-3 text-red-400 text-xs border border-red-500/30 bg-slate-950 rounded flex flex-col gap-2 overflow-hidden z-50 shadow-2xl">
                     <div className="flex items-center gap-2 text-red-500 font-bold border-b border-red-500/20 pb-2 shrink-0">
                         <Ban size={16} />
-                        <span>Widget Crashed</span>
+                        <span>{title || 'Widget'} Crashed</span>
                     </div>
                     <div className="font-mono text-[10px] opacity-90 whitespace-pre-wrap break-words flex-1 overflow-y-auto custom-scrollbar bg-black/20 p-2 rounded border border-white/5">
                         {this.state.errorMsg}
                     </div>
                     {onReportError && (
-                        <button 
-                            onClick={() => onReportError(this.state.errorMsg, code)}
-                            className="flex items-center justify-center gap-2 bg-lrgex-orange text-white px-3 py-2 rounded text-xs w-full hover:bg-orange-600 transition-colors shrink-0 font-bold shadow-lg shadow-orange-900/20"
-                        >
-                            <Bot size={14} /> Fix with AI
-                        </button>
+                        <div className="flex gap-2 shrink-0">
+                            <button 
+                                onClick={() => onReportError(this.state.errorMsg)}
+                                className="flex-1 flex items-center justify-center gap-1 bg-red-500/10 text-red-300 border border-red-500/30 px-2 py-2 rounded text-[10px] hover:bg-red-500/20 transition-colors font-bold"
+                                title="Send only the error message to AI"
+                            >
+                                <AlertTriangle size={12} /> Error Only
+                            </button>
+                            <button 
+                                onClick={() => onReportError(this.state.errorMsg, code)}
+                                className="flex-1 flex items-center justify-center gap-1 bg-lrgex-orange text-white px-2 py-2 rounded text-[10px] hover:bg-orange-600 transition-colors font-bold shadow-lg shadow-orange-900/20"
+                                title="Send code and error to AI for fixing"
+                            >
+                                <Bot size={12} /> Fix Code
+                            </button>
+                        </div>
                     )}
                 </div>
             );
@@ -122,7 +134,7 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
 };
 
 // 3. Inner Component (The Dangerous Part)
-const InnerCustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customData, onSetCustomData, width, height, onReportError }) => {
+const InnerCustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customData, onSetCustomData, width, height, onReportError, title }) => {
     
     const GeneratedComponent = useMemo(() => {
         try {
@@ -170,12 +182,20 @@ const InnerCustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customDa
                         <pre className="whitespace-pre-wrap font-mono bg-black/30 p-2 rounded border border-white/10">{err.message}</pre>
                     </div>
                     {onReportError && (
-                        <button 
-                            onClick={() => onReportError(err.message, code)}
-                            className="flex items-center gap-2 bg-lrgex-orange text-white px-3 py-1.5 rounded text-xs w-fit hover:bg-orange-600 transition-colors mt-2 font-bold"
-                        >
-                            <Bot size={14} /> Ask AI to Fix
-                        </button>
+                        <div className="flex gap-2 mt-2">
+                             <button 
+                                onClick={() => onReportError(err.message)}
+                                className="flex items-center gap-1 bg-red-500/20 text-red-300 border border-red-500/50 px-2 py-1.5 rounded text-[10px] hover:bg-red-500/30 transition-colors font-bold"
+                            >
+                                <AlertTriangle size={12} /> Error Only
+                            </button>
+                            <button 
+                                onClick={() => onReportError(err.message, code)}
+                                className="flex items-center gap-1 bg-lrgex-orange text-white px-2 py-1.5 rounded text-[10px] hover:bg-orange-600 transition-colors font-bold"
+                            >
+                                <Bot size={12} /> Fix Code
+                            </button>
+                        </div>
                     )}
                 </div>
             );
@@ -222,7 +242,7 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = (props) => {
     return (
         <div ref={containerRef} className="w-full h-full custom-code-container relative overflow-hidden">
              {dimensions.width > 0 && (
-                <WidgetErrorBoundary onReportError={props.onReportError} codeHash={props.code} code={props.code}>
+                <WidgetErrorBoundary onReportError={props.onReportError} codeHash={props.code} code={props.code} title={props.title}>
                     <InnerCustomCodeWidget 
                         {...props} 
                         width={dimensions.width} 
