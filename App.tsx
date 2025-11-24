@@ -288,6 +288,11 @@ const App: React.FC = () => {
 
   const reportWidgetError = useCallback((error: string, code?: string) => {
       let prompt = `I'm getting this error with the custom widget code:\n\n${error}\n\n`;
+      
+      if (error.includes("Infinite Render Loop")) {
+          prompt += `**IMPORTANT**: This error usually happens because you defined a React Component/Function *inside* the render body, causing it to remount on every frame. Move helper components outside or use standard variables.\n\n`;
+      }
+
       if (code) {
           prompt += `Here is the current code:\n\n\`\`\`javascript\n${code}\n\`\`\`\n\n`;
       }
