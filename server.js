@@ -177,6 +177,10 @@ api.post('/proxy', async (req, res) => {
         if (!safeHeaders['Referer'] && !safeHeaders['referer']) {
             safeHeaders['Referer'] = targetUrlObj.origin + '/';
         }
+        // Inject User-Agent if missing (some APIs block unknown agents)
+        if (!safeHeaders['User-Agent'] && !safeHeaders['user-agent']) {
+            safeHeaders['User-Agent'] = 'Mozilla/5.0 (LRGEX-HUB-Proxy)';
+        }
 
         // Forward the request
         let response;
@@ -212,6 +216,13 @@ api.post('/proxy', async (req, res) => {
                 return;
             }
             res.setHeader(key, val);
+            
+            // CRITICAL: Copy Set-Cookie to X-Set-Cookie
+            // Browsers hide standard Set-Cookie headers from JavaScript fetch responses.
+            // We expose it via a custom header so the widget can read the SID/Token.
+            if (key.toLowerCase() === 'set-cookie') {
+                res.setHeader('X-Set-Cookie', val);
+            }
         });
 
         // Forward status

@@ -1,4 +1,3 @@
-
 import React, { Component, useEffect, useState, useRef, useMemo, ReactNode } from 'react';
 import * as LucideIcons from 'lucide-react';
 import { AlertTriangle, Bot } from 'lucide-react';
@@ -79,18 +78,39 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
     
     if (!response.ok) {
         // Robustly handle error reading
-        const text = await response.text();
         try {
-            const errorJson = JSON.parse(text);
-            throw new Error(errorJson.details || errorJson.error || `Proxy Error (${response.status})`);
-        } catch (e: any) {
-            // If the error thrown was the one above, rethrow
-            if (e.message && e.message.includes('Proxy Error')) throw e;
-            
-            // Otherwise it was a JSON parse error, meaning the server sent back raw text (HTML or plain text error)
-            throw new Error(`Proxy Error (${response.status}): ${text}`);
+            const text = await response.text();
+            try {
+                const errorJson = JSON.parse(text);
+                throw new Error(errorJson.details || errorJson.error || `Proxy Error (${response.status})`);
+            } catch (e: any) {
+                if (e.message && e.message.includes('Proxy Error')) throw e;
+                throw new Error(`Proxy Error (${response.status}): ${text}`);
+            }
+        } catch (readErr: any) {
+             // Fallback if reading body fails (e.g. double read)
+             throw new Error(`Proxy Error (${response.status}) - Could not read details`);
         }
     }
+
+    // Polyfill for Set-Cookie reading in browser
+    // The server copies Set-Cookie to X-Set-Cookie so JS can read it
+    const xSetCookie = response.headers.get('X-Set-Cookie');
+    if (xSetCookie) {
+        // We create a proxy around the headers to intercept 'get' calls for 'set-cookie'
+        const originalHeaders = response.headers;
+        Object.defineProperty(response, 'headers', {
+            value: {
+                get: (name: string) => {
+                    if (name.toLowerCase() === 'set-cookie') return xSetCookie;
+                    return originalHeaders.get(name);
+                },
+                forEach: (callback: any, thisArg: any) => originalHeaders.forEach(callback, thisArg),
+                // Add other Header methods if needed, but 'get' is the critical one for widgets
+            }
+        });
+    }
+
     return response;
 };
 
