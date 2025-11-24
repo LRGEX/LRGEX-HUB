@@ -8,6 +8,8 @@ interface CustomCodeWidgetProps {
     customData: Record<string, any>;
     onSetCustomData: (data: Record<string, any>) => void;
     onReportError?: (error: string) => void;
+    width?: number;
+    height?: number;
 }
 
 interface ErrorBoundaryProps {
@@ -21,7 +23,7 @@ interface ErrorBoundaryState {
 }
 
 // Error Boundary Component to prevent whole app crashes
-class WidgetErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class WidgetErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     constructor(props: ErrorBoundaryProps) {
         super(props);
         this.state = {
@@ -71,13 +73,23 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
             url,
             method: options.method || 'GET',
             headers: options.headers || {},
-            body: options.body ? JSON.parse(options.body as string) : undefined
+            body: options.body ? JSON.stringify(options.body) : undefined
         })
     });
     
     if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Proxy Error (${response.status}): ${text}`);
+        // Try to parse as JSON error from our proxy first
+        try {
+            const errorJson = await response.json();
+            throw new Error(errorJson.details || errorJson.error || `Proxy Error (${response.status})`);
+        } catch (e: any) {
+            // Fallback to text
+            // If the error we caught was the one we threw above, rethrow it
+            if (e.message.includes('Proxy Error')) throw e;
+            
+            const text = await response.text();
+            throw new Error(`Proxy Error (${response.status}): ${text}`);
+        }
     }
     return response;
 };

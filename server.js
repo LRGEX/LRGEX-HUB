@@ -11,7 +11,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use((req, res, next) => {
     // Filter out internal/static noise if needed, but useful for debug
     if (req.path.startsWith('/api')) {
-        console.log(`[${req.method}] ${req.path}`);
+        console.log(`[${new Date().toISOString()}] [${req.method}] ${req.path}`);
     }
     next();
 });
@@ -144,22 +144,48 @@ api.post('/proxy', async (req, res) => {
     }
 
     try {
-        console.log(`[Proxy] ${method} ${url}`);
+        console.log(`[Proxy Request] ${method} ${url}`);
         
-        // Forward the request
-        const response = await fetch(url, {
-            method,
-            headers: {
-                ...headers,
-                // Avoid host header conflicts
-                host: undefined, 
-                'content-length': undefined
-            },
-            body: body ? JSON.stringify(body) : undefined
-        });
+        // Validate URL
+        try {
+            new URL(url);
+        } catch (e) {
+            console.error(`[Proxy] Invalid URL provided: ${url}`);
+            return res.status(400).json({ error: 'Invalid URL format' });
+        }
 
-        const contentType = response.headers.get('content-type');
+        // Forward the request
+        // We wrap fetch in a try/catch to handle network errors (DNS, Connection Refused) specifically
+        let response;
+        try {
+            response = await fetch(url, {
+                method,
+                headers: {
+                    ...headers,
+                    // Avoid host header conflicts and issues with content-length mismatch
+                    host: undefined, 
+                    'content-length': undefined
+                },
+                body: body ? JSON.stringify(body) : undefined
+            });
+        } catch (networkError) {
+            console.error(`[Proxy Network Fail] ${url}`, networkError);
+            if (networkError.cause) {
+                console.error(`[Proxy Cause]`, networkError.cause);
+            }
+            return res.status(502).json({ 
+                error: 'Network Error - Could not reach target', 
+                details: networkError.message,
+                cause: networkError.cause ? String(networkError.cause) : undefined
+            });
+        }
+
         const responseText = await response.text();
+
+        // Log if the remote server returned an error status
+        if (!response.ok) {
+            console.warn(`[Proxy Remote Error] Status: ${response.status} from ${url}`);
+        }
 
         // Forward status
         res.status(response.status);
@@ -169,12 +195,12 @@ api.post('/proxy', async (req, res) => {
             const json = JSON.parse(responseText);
             res.json(json);
         } catch (e) {
-            // Fallback to text
+            // Fallback to text if not JSON
             res.send(responseText);
         }
 
     } catch (error) {
-        console.error(`[Proxy Error] ${error.message}`);
+        console.error(`[Proxy Internal Error] ${error.message}`, error);
         res.status(500).json({ error: error.message });
     }
 });
