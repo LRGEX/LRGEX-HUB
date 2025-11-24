@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, GripHorizontal } from 'lucide-react';
+import { X, GripHorizontal, Check } from 'lucide-react';
 
 interface WidgetWrapperProps {
   id?: string;
@@ -29,9 +29,15 @@ export const WidgetWrapper: React.FC<WidgetWrapperProps> = ({
 }) => {
   const [isResizing, setIsResizing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const startPos = useRef({ x: 0, y: 0 });
   const startSize = useRef({ w: 1, h: 1 });
+
+  // Reset confirmation when edit mode is toggled off
+  useEffect(() => {
+      if (!editMode) setConfirmDelete(false);
+  }, [editMode]);
 
   // --- Resize Logic ---
   useEffect(() => {
@@ -109,6 +115,18 @@ export const WidgetWrapper: React.FC<WidgetWrapperProps> = ({
     }
   };
 
+  const handleRemoveClick = () => {
+      if (confirmDelete && onRemove) {
+          onRemove();
+      } else {
+          setConfirmDelete(true);
+      }
+  };
+
+  const handleCancelDelete = () => {
+      setConfirmDelete(false);
+  };
+
   return (
     <div 
       ref={wrapperRef}
@@ -122,12 +140,31 @@ export const WidgetWrapper: React.FC<WidgetWrapperProps> = ({
       `}
     >
       {editMode && (
-        <button 
-          onClick={onRemove}
-          className="absolute top-2 right-2 z-20 p-1 bg-red-500/10 text-red-400 rounded-full hover:bg-red-500 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
-        >
-          <X size={16} />
-        </button>
+        <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+            {confirmDelete ? (
+                <div className="flex gap-1 animate-in fade-in">
+                    <button 
+                        onClick={handleRemoveClick}
+                        className="bg-red-500 text-white text-[10px] px-2 py-1 rounded hover:bg-red-600 transition-colors flex items-center gap-1"
+                    >
+                        Confirm
+                    </button>
+                    <button 
+                        onClick={handleCancelDelete}
+                        className="bg-lrgex-panel border border-lrgex-border text-lrgex-muted hover:text-white p-1 rounded transition-colors"
+                    >
+                        <X size={12}/>
+                    </button>
+                </div>
+            ) : (
+                <button 
+                    onClick={handleRemoveClick}
+                    className="p-1 bg-red-500/10 text-red-400 rounded-full hover:bg-red-500 hover:text-white transition-colors"
+                >
+                    <X size={16} />
+                </button>
+            )}
+        </div>
       )}
       
       {title && (
@@ -136,7 +173,7 @@ export const WidgetWrapper: React.FC<WidgetWrapperProps> = ({
           onDragStart={handleDragStart}
           className={`px-4 py-3 border-b border-lrgex-border flex items-center justify-between bg-lrgex-menu/30 shrink-0 ${editMode ? 'cursor-move active:cursor-grabbing' : ''}`}
         >
-          <h3 className="text-xs font-semibold text-lrgex-muted uppercase tracking-wider truncate pr-6 select-none">{title}</h3>
+          <h3 className="text-xs font-semibold text-lrgex-muted uppercase tracking-wider truncate pr-10 select-none">{title}</h3>
           {editMode && <GripHorizontal size={14} className="text-lrgex-muted/50" />}
         </div>
       )}
