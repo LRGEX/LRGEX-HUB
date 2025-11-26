@@ -157,6 +157,75 @@ const getBase64Parts = (dataUri: string) => {
     };
 };
 
+// --- Title Generation ---
+
+export const generateChatTitle = async (
+  settings: AiSettings,
+  messages: any[]
+): Promise<string> => {
+    if (!messages || messages.length === 0) return "New Chat";
+
+    // Prepare context
+    const contextMessages = messages.slice(0, 6); 
+    const conversation = contextMessages.map(m => `${m.role}: ${m.text}`).join('\n');
+    const prompt = `Generate a short, concise title (max 5 words) for this chat. Output ONLY the title text. Do not use quotes or markdown.\n\nConversation:\n${conversation}`;
+
+    try {
+        if (settings.provider === 'GEMINI') {
+             if (!settings.geminiKey) return "New Chat";
+             const ai = new GoogleGenAI({ apiKey: settings.geminiKey });
+             const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+             });
+             return response.text.trim();
+        }
+
+        // OpenAI / OpenRouter / Ollama
+        let apiKey = settings.openAiKey;
+        let model = settings.openAiModel;
+        let url = settings.openAiUrl || "https://api.openai.com/v1/chat/completions";
+
+        if (settings.provider === 'OPENROUTER') {
+            apiKey = settings.openRouterKey;
+            model = settings.openRouterModel;
+            url = "https://openrouter.ai/api/v1/chat/completions";
+        } else if (settings.provider === 'OLLAMA') {
+            apiKey = "ollama";
+            model = settings.ollamaModel;
+            url = `${settings.ollamaUrl.replace(/\/$/, '')}/v1/chat/completions`;
+        }
+
+        if (!apiKey && settings.provider !== 'OLLAMA') return "New Chat";
+
+        const res = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+                ...(settings.provider === 'OPENROUTER' ? { "HTTP-Referer": window.location.origin } : {})
+            },
+            body: JSON.stringify({
+                model: model || (settings.provider === 'OLLAMA' ? 'llama3' : 'gpt-4o'),
+                messages: [{ role: "user", content: prompt }],
+                stream: false
+            })
+        });
+
+        const json = await res.json();
+        if (json.choices && json.choices.length > 0) {
+            return json.choices[0].message.content.trim().replace(/^["']|["']$/g, '');
+        }
+
+    } catch (e) {
+        console.warn("Failed to auto-generate title:", e);
+    }
+    
+    // Fallback: use first user message
+    const firstUserMsg = messages.find(m => m.role === 'user');
+    return firstUserMsg ? (firstUserMsg.text.slice(0, 30) + (firstUserMsg.text.length > 30 ? '...' : '')) : "New Chat";
+};
+
 // --- Gemini Implementation ---
 
 export const sendMessageGemini = async (

@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { sendMessageGemini, sendMessageOpenAi, sendMessageOllama, ToolExecutors } from '../../services/aiService';
+import { sendMessageGemini, sendMessageOpenAi, sendMessageOllama, ToolExecutors, generateChatTitle } from '../../services/aiService';
 import { ChatMessage, AiSettings, UniversalWidgetConfig, WidgetType, ChatHistory, AiMode, AiProvider, ChatData } from '../../types';
 import { Send, Bot, User, Loader2, Settings, ShieldAlert, Cpu, Trash2, Copy, Check, RotateCcw, Paperclip, X, Type, Square, MessageSquare, Plus, Edit2, Save } from 'lucide-react';
 
@@ -172,6 +172,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   const historyRef = useRef<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const titleGeneratedRef = useRef(false);
 
   useEffect(() => {
     if (externalPrompt) {
@@ -204,6 +205,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       setMessages([]);
       historyRef.current = [];
       setPendingImage(null);
+      titleGeneratedRef.current = false;
       if (abortControllerRef.current) {
           abortControllerRef.current.abort();
           setIsLoading(false);
@@ -211,7 +213,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   };
 
   // Chat History Functions
-  const generateChatName = (messages: ChatMessage[]): string => {
+  const generateChatNameLocal = (messages: ChatMessage[]): string => {
       if (messages.length === 0) return 'New Chat';
       const firstUserMsg = messages.find(m => m.role === 'user');
       if (firstUserMsg) {
@@ -223,9 +225,29 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
 
   const handleSaveCurrentChat = async () => {
       if (messages.length > 0) {
-          const chatName = currentChatId
-              ? currentChatName
-              : generateChatName(messages);
+          let chatName = currentChatId ? currentChatName : 'New Chat';
+          
+          // Logic: If it's a new chat OR name is default, and we have enough messages, try to generate a title
+          if ((!currentChatId || currentChatName === 'New Chat') && messages.length >= 2) {
+              if (!titleGeneratedRef.current) {
+                   titleGeneratedRef.current = true;
+                   const autoTitle = await generateChatTitle(settings, messages);
+                   if (autoTitle && autoTitle !== 'New Chat') {
+                       chatName = autoTitle;
+                       setCurrentChatName(autoTitle);
+                   } else {
+                       // Fallback to local gen if AI fails or returns empty
+                       if (!currentChatId || currentChatName === 'New Chat') {
+                           chatName = generateChatNameLocal(messages);
+                           setCurrentChatName(chatName);
+                       }
+                   }
+              }
+          } else if (!currentChatId && currentChatName === 'New Chat') {
+              // Basic fallback for first save if < 2 messages
+              chatName = generateChatNameLocal(messages);
+          }
+
           const savedId = await onSaveChat(currentChatId, chatName, settings.mode, settings.provider, messages);
           if (!currentChatId) {
               setCurrentChatId(savedId);
@@ -244,6 +266,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       setMessages(loadedMessages);
       setCurrentChatId(chat.id);
       setCurrentChatName(chat.name);
+      titleGeneratedRef.current = true; // Assume loaded chats already have titles or don't need regeneration immediately
       setShowChatList(false);
 
       // Switch mode to match the chat's original mode
@@ -272,6 +295,8 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
 
   const handleDeleteChat = (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
+      e.preventDefault();
+      
       if (confirmDeleteChatId === id) {
           onDeleteChat(id);
           if (currentChatId === id) {
@@ -280,7 +305,8 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
           setConfirmDeleteChatId(null);
       } else {
           setConfirmDeleteChatId(id);
-          setTimeout(() => setConfirmDeleteChatId(null), 3000);
+          // Increased timeout for better UX
+          setTimeout(() => setConfirmDeleteChatId(null), 4000);
       }
   };
 
@@ -733,21 +759,25 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
                             onClick={(e) => handleRenameChat(chat.id, e)}
-                            className="p-1 hover:bg-lrgex-panel rounded text-lrgex-muted hover:text-blue-400"
+                            className="p-1.5 hover:bg-lrgex-panel rounded text-lrgex-muted hover:text-blue-400 w-6 h-6 flex items-center justify-center"
                             title="Rename"
                           >
                             <Edit2 size={10} />
                           </button>
                           <button
                             onClick={(e) => handleDeleteChat(chat.id, e)}
-                            className={`p-1 hover:bg-lrgex-panel rounded transition-colors ${
+                            className={`p-1.5 rounded transition-all duration-200 flex items-center justify-center ${
                               confirmDeleteChatId === chat.id
-                                ? 'bg-red-500 text-white'
-                                : 'text-lrgex-muted hover:text-red-400'
+                                ? 'bg-red-500 text-white w-16'
+                                : 'hover:bg-lrgex-panel text-lrgex-muted hover:text-red-400 w-6'
                             }`}
-                            title={confirmDeleteChatId === chat.id ? 'Click again to confirm' : 'Delete'}
+                            title={confirmDeleteChatId === chat.id ? 'Click to Confirm' : 'Delete'}
                           >
-                            <Trash2 size={10} />
+                            {confirmDeleteChatId === chat.id ? (
+                                <span className="text-[10px] font-bold">Delete</span>
+                            ) : (
+                                <Trash2 size={10} />
+                            )}
                           </button>
                         </div>
                       </div>
