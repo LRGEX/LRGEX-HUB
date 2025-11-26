@@ -10,8 +10,8 @@ import { LinkGroup } from './components/LinkGroup';
 import { BackupModal } from './components/BackupModal';
 import { WebAppCard } from './components/WebAppCard';
 import { WebAppModal } from './components/WebAppModal';
-import { AppData, WidgetType, WidgetConfig, LinkItem, UniversalWidgetConfig, AiSettings, WidgetTemplate, GeneralSettings, BackupSettings, WebApp } from './types';
-import { saveBackupToServer } from './services/backupService';
+import { AppData, WidgetType, WidgetConfig, LinkItem, UniversalWidgetConfig, AiSettings, WidgetTemplate, GeneralSettings, BackupSettings, WebApp, ChatHistory, ChatMessage, ChatData } from './types';
+import { saveBackupToServer, restoreChatMessages, BackupData } from './services/backupService';
 import { Settings, Check, FolderPlus, X, LayoutTemplate, Trash2, Bot, Save, Clock, Cloud, Database, PanelRightClose, PanelRightOpen, GripVertical, GripHorizontal, AlignLeft, AlignCenter, AlignRight, Eye, EyeOff, Plus, Search, AppWindow, FolderMinus, Star, Minus, Columns } from 'lucide-react';
 
 // Helper for generating unique IDs
@@ -66,7 +66,8 @@ const DEFAULT_DATA: AppData = {
   },
   backupSettings: DEFAULT_BACKUP_SETTINGS,
   sectionOrder: ['webApps', 'widgets', 'bookmarks'],
-  sectionVisibility: { widgets: true, bookmarks: true, webApps: true }
+  sectionVisibility: { widgets: true, bookmarks: true, webApps: true },
+  chatHistories: []
 };
 
 // --- Modal Component for Templates ---
@@ -607,17 +608,108 @@ const App: React.FC = () => {
       setData(prev => ({ ...prev, backupSettings: settings }));
   };
 
-  const handleRestore = (newData: AppData) => {
+  // Chat History Management
+  const saveChat = useCallback(async (id: string | null, name: string, mode: AiSettings['mode'], provider: AiSettings['provider'], messages: ChatMessage[]) => {
+      const now = Date.now();
+      const chatId = id || generateUUID();
+
+      // Save messages to separate file
+      try {
+          await fetch(`/api/chats/${chatId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: chatId, messages })
+          });
+      } catch (e) {
+          console.error('Failed to save chat messages:', e);
+      }
+
+      // Save metadata to config
+      setData(prev => {
+          const existingIndex = prev.chatHistories.findIndex(h => h.id === chatId);
+
+          if (existingIndex >= 0) {
+              // Update existing chat metadata
+              const updated = [...prev.chatHistories];
+              updated[existingIndex] = {
+                  ...updated[existingIndex],
+                  name,
+                  messageCount: messages.length,
+                  updatedAt: now
+              };
+              return { ...prev, chatHistories: updated };
+          } else {
+              // Create new chat metadata
+              const newChat: ChatHistory = {
+                  id: chatId,
+                  name,
+                  mode,
+                  provider,
+                  messageCount: messages.length,
+                  createdAt: now,
+                  updatedAt: now
+              };
+              return { ...prev, chatHistories: [...prev.chatHistories, newChat] };
+          }
+      });
+
+      return chatId;
+  }, []);
+
+  const loadChatMessages = useCallback(async (id: string): Promise<ChatMessage[]> => {
+      try {
+          const res = await fetch(`/api/chats/${id}`);
+          if (!res.ok) throw new Error('Chat not found');
+          const data: ChatData = await res.json();
+          return data.messages;
+      } catch (e) {
+          console.error('Failed to load chat messages:', e);
+          return [];
+      }
+  }, []);
+
+  const deleteChat = useCallback(async (id: string) => {
+      // Delete messages file
+      try {
+          await fetch(`/api/chats/${id}`, { method: 'DELETE' });
+      } catch (e) {
+          console.error('Failed to delete chat messages:', e);
+      }
+
+      // Delete metadata from config
+      setData(prev => ({
+          ...prev,
+          chatHistories: prev.chatHistories.filter(h => h.id !== id)
+      }));
+  }, []);
+
+  const renameChat = useCallback((id: string, newName: string) => {
+      setData(prev => ({
+          ...prev,
+          chatHistories: prev.chatHistories.map(h =>
+              h.id === id ? { ...h, name: newName, updatedAt: Date.now() } : h
+          )
+      }));
+  }, []);
+
+  const handleRestore = async (backupData: BackupData) => {
+      // Restore chat messages to individual files if present
+      if (backupData.chatMessages) {
+          await restoreChatMessages(backupData.chatMessages);
+      }
+
+      // Restore main config data
       setData(prev => {
           const merged: AppData = {
               ...DEFAULT_DATA,
-              ...newData,
-              aiSettings: { ...DEFAULT_AI_SETTINGS, ...newData.aiSettings },
-              generalSettings: { ...DEFAULT_DATA.generalSettings, ...newData.generalSettings },
-              backupSettings: { ...DEFAULT_BACKUP_SETTINGS, ...newData.backupSettings },
-              sectionOrder: newData.sectionOrder || DEFAULT_DATA.sectionOrder,
-              sectionVisibility: { ...DEFAULT_DATA.sectionVisibility, ...(newData.sectionVisibility || {}) },
-              webApps: newData.webApps || []
+              ...backupData,
+              aiSettings: { ...DEFAULT_AI_SETTINGS, ...backupData.aiSettings },
+              generalSettings: { ...DEFAULT_DATA.generalSettings, ...backupData.generalSettings },
+              backupSettings: { ...DEFAULT_BACKUP_SETTINGS, ...backupData.backupSettings },
+              sectionOrder: backupData.sectionOrder || DEFAULT_DATA.sectionOrder,
+              sectionVisibility: { ...DEFAULT_DATA.sectionVisibility, ...(backupData.sectionVisibility || {}) },
+              webApps: backupData.webApps || [],
+              chatHistories: backupData.chatHistories || []
           };
           if (!merged.sectionOrder.includes('webApps')) merged.sectionOrder.unshift('webApps');
           return merged;
@@ -1338,14 +1430,19 @@ const App: React.FC = () => {
 
         <aside className={`${sidebarOpen ? 'w-[400px] border-l' : 'w-0 border-l-0'} transition-[width] duration-300 ease-in-out bg-lrgex-menu/30 border-lrgex-border flex flex-col shrink-0 overflow-hidden relative`}>
              <div className="w-[400px] h-full flex flex-col">
-                <AiWidget 
-                    settings={data.aiSettings} 
+                <AiWidget
+                    settings={data.aiSettings}
                     onUpdateSettings={updateAiSettings}
-                    onAddWidget={handleAiAddWidget} 
+                    onAddWidget={handleAiAddWidget}
                     onAddBookmark={handleAiAddBookmark}
                     onAddWebApp={handleAiAddWebApp}
                     externalPrompt={aiPromptOverride}
                     onClearExternalPrompt={() => setAiPromptOverride(null)}
+                    chatHistories={data.chatHistories}
+                    onSaveChat={saveChat}
+                    onLoadChatMessages={loadChatMessages}
+                    onDeleteChat={deleteChat}
+                    onRenameChat={renameChat}
                 />
              </div>
         </aside>

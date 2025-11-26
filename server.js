@@ -23,9 +23,10 @@ app.use((req, res, next) => {
 // Directory Structure
 const CONFIG_DIR = path.join(__dirname, 'config');
 const BACKUPS_DIR = path.join(CONFIG_DIR, 'backups');
+const CHATS_DIR = path.join(CONFIG_DIR, 'chats');
 
 // Ensure directories exist
-[CONFIG_DIR, BACKUPS_DIR].forEach(dir => {
+[CONFIG_DIR, BACKUPS_DIR, CHATS_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         try {
             fs.mkdirSync(dir, { recursive: true });
@@ -136,6 +137,78 @@ api.get('/backups/:filename', (req, res) => {
         } catch (e) {
             res.status(500).json({ error: 'Invalid JSON' });
         }
+    });
+});
+
+// GET /api/chats/:id - Get messages for a specific chat
+api.get('/chats/:id', (req, res) => {
+    const chatId = req.params.id;
+    if (chatId.includes('..') || chatId.includes('/')) {
+        return res.status(400).json({ error: 'Invalid chat ID' });
+    }
+
+    const chatFile = path.join(CHATS_DIR, `${chatId}.json`);
+
+    if (!fs.existsSync(chatFile)) {
+        return res.status(404).json({ error: 'Chat not found' });
+    }
+
+    fs.readFile(chatFile, 'utf8', (err, data) => {
+        if (err) {
+            console.error(`Error reading chat ${chatId}:`, err);
+            return res.status(500).json({ error: 'Failed to read chat' });
+        }
+        try {
+            res.json(JSON.parse(data));
+        } catch (e) {
+            console.error(`Chat ${chatId} corrupted:`, e);
+            res.status(500).json({ error: 'Chat file corrupted' });
+        }
+    });
+});
+
+// POST /api/chats/:id - Save/update messages for a specific chat
+api.post('/chats/:id', (req, res) => {
+    const chatId = req.params.id;
+    if (chatId.includes('..') || chatId.includes('/')) {
+        return res.status(400).json({ error: 'Invalid chat ID' });
+    }
+
+    const chatData = req.body;
+    if (!chatData || !chatData.messages) {
+        return res.status(400).json({ error: 'Invalid chat data' });
+    }
+
+    const chatFile = path.join(CHATS_DIR, `${chatId}.json`);
+
+    fs.writeFile(chatFile, JSON.stringify(chatData, null, 2), (err) => {
+        if (err) {
+            console.error(`Error saving chat ${chatId}:`, err);
+            return res.status(500).json({ error: 'Failed to save chat' });
+        }
+        res.json({ success: true });
+    });
+});
+
+// DELETE /api/chats/:id - Delete a chat's messages
+api.delete('/chats/:id', (req, res) => {
+    const chatId = req.params.id;
+    if (chatId.includes('..') || chatId.includes('/')) {
+        return res.status(400).json({ error: 'Invalid chat ID' });
+    }
+
+    const chatFile = path.join(CHATS_DIR, `${chatId}.json`);
+
+    if (!fs.existsSync(chatFile)) {
+        return res.json({ success: true }); // Already deleted
+    }
+
+    fs.unlink(chatFile, (err) => {
+        if (err) {
+            console.error(`Error deleting chat ${chatId}:`, err);
+            return res.status(500).json({ error: 'Failed to delete chat' });
+        }
+        res.json({ success: true });
     });
 });
 

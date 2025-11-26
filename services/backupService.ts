@@ -1,4 +1,4 @@
-import { AppData } from '../types';
+import { AppData, ChatData } from '../types';
 
 // --- Server API Helpers ---
 
@@ -7,14 +7,46 @@ export interface ServerBackupFile {
     created: string;
 }
 
+export interface BackupData extends AppData {
+    chatMessages?: Record<string, ChatData>; // chatId -> ChatData
+}
+
+// Helper to collect all chat messages
+const collectChatMessages = async (chatHistories: AppData['chatHistories']): Promise<Record<string, ChatData>> => {
+    const chatMessages: Record<string, ChatData> = {};
+
+    for (const chat of chatHistories) {
+        try {
+            const response = await fetch(`/api/chats/${chat.id}`);
+            if (response.ok) {
+                const chatData: ChatData = await response.json();
+                chatMessages[chat.id] = chatData;
+            }
+        } catch (e) {
+            console.warn(`Failed to fetch messages for chat ${chat.id}:`, e);
+        }
+    }
+
+    return chatMessages;
+};
+
 export const saveBackupToServer = async (data: AppData): Promise<{ success: boolean; filename: string }> => {
     try {
+        // Collect all chat messages
+        const chatMessages = await collectChatMessages(data.chatHistories || []);
+
+        // Create backup data with messages
+        const backupData: BackupData = {
+            ...data,
+            chatMessages
+        };
+
         const response = await fetch('/api/backups', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify(data),
+            body: JSON.stringify(backupData),
         });
 
         if (!response.ok) {
@@ -39,7 +71,7 @@ export const getServerBackups = async (): Promise<ServerBackupFile[]> => {
     }
 };
 
-export const fetchServerBackup = async (filename: string): Promise<AppData> => {
+export const fetchServerBackup = async (filename: string): Promise<BackupData> => {
     try {
         const response = await fetch(`/api/backups/${filename}`);
         if (!response.ok) throw new Error('Failed to download backup file');
@@ -52,11 +84,20 @@ export const fetchServerBackup = async (filename: string): Promise<AppData> => {
 
 // --- Local Helpers ---
 
-export const downloadBackup = (data: AppData) => {
-    const jsonString = JSON.stringify(data, null, 2);
+export const downloadBackup = async (data: AppData) => {
+    // Collect all chat messages
+    const chatMessages = await collectChatMessages(data.chatHistories || []);
+
+    // Create backup data with messages
+    const backupData: BackupData = {
+        ...data,
+        chatMessages
+    };
+
+    const jsonString = JSON.stringify(backupData, null, 2);
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    
+
     const link = document.createElement('a');
     link.href = url;
     link.download = `lrgex_hub_backup_${new Date().toISOString().slice(0, 10)}.json`;
@@ -66,7 +107,7 @@ export const downloadBackup = (data: AppData) => {
     URL.revokeObjectURL(url);
 };
 
-export const parseBackupFile = (file: File): Promise<AppData> => {
+export const parseBackupFile = (file: File): Promise<BackupData> => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -78,13 +119,13 @@ export const parseBackupFile = (file: File): Promise<AppData> => {
                 }
 
                 const json = JSON.parse(result);
-                
+
                 // Basic validation
                 if (!Array.isArray(json.widgets) || !Array.isArray(json.categories)) {
                     reject(new Error("Invalid backup file format: Missing required fields"));
                     return;
                 }
-                
+
                 resolve(json);
             } catch (err: any) {
                 reject(new Error("Failed to parse JSON: " + err.message));
@@ -93,4 +134,19 @@ export const parseBackupFile = (file: File): Promise<AppData> => {
         reader.onerror = () => reject(new Error("Failed to read file"));
         reader.readAsText(file);
     });
+};
+
+// Helper to restore chat messages to individual files
+export const restoreChatMessages = async (chatMessages: Record<string, ChatData>): Promise<void> => {
+    for (const [chatId, chatData] of Object.entries(chatMessages)) {
+        try {
+            await fetch(`/api/chats/${chatId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(chatData)
+            });
+        } catch (e) {
+            console.error(`Failed to restore chat ${chatId}:`, e);
+        }
+    }
 };

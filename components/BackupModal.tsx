@@ -172,7 +172,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({ isOpen, onClose, data,
                             <div className="space-y-4">
                                 <h3 className="text-xs font-bold text-lrgex-muted uppercase tracking-wider">Manual Actions</h3>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div className="bg-lrgex-bg/50 p-4 rounded-xl border border-lrgex-border hover:border-lrgex-orange/50 transition-colors group cursor-pointer" onClick={() => downloadBackup(data)}>
+                                    <div className="bg-lrgex-bg/50 p-4 rounded-xl border border-lrgex-border hover:border-lrgex-orange/50 transition-colors group cursor-pointer" onClick={async () => await downloadBackup(data)}>
                                         <div className="flex items-center gap-3 mb-3">
                                             <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
                                                 <Download size={20} />

@@ -1,8 +1,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { sendMessageGemini, sendMessageOpenAi, sendMessageOllama, ToolExecutors } from '../../services/aiService';
-import { ChatMessage, AiSettings, UniversalWidgetConfig, WidgetType } from '../../types';
-import { Send, Bot, User, Loader2, Settings, ShieldAlert, Cpu, Trash2, Copy, Check, RotateCcw, Paperclip, X, Type, Square } from 'lucide-react';
+import { ChatMessage, AiSettings, UniversalWidgetConfig, WidgetType, ChatHistory, AiMode, AiProvider, ChatData } from '../../types';
+import { Send, Bot, User, Loader2, Settings, ShieldAlert, Cpu, Trash2, Copy, Check, RotateCcw, Paperclip, X, Type, Square, MessageSquare, Plus, Edit2, Save } from 'lucide-react';
 
 interface AiWidgetProps {
   settings: AiSettings;
@@ -12,6 +12,11 @@ interface AiWidgetProps {
   onAddWebApp?: (args: { name: string; url: string; description?: string; category: string; iconUrl?: string }) => void;
   externalPrompt?: string | null;
   onClearExternalPrompt?: () => void;
+  chatHistories: ChatHistory[];
+  onSaveChat: (id: string | null, name: string, mode: AiMode, provider: AiProvider, messages: ChatMessage[]) => Promise<string>;
+  onLoadChatMessages: (id: string) => Promise<ChatMessage[]>;
+  onDeleteChat: (id: string) => Promise<void>;
+  onRenameChat: (id: string, newName: string) => void;
 }
 
 // --- Copy Helper ---
@@ -150,12 +155,18 @@ const parseInline = (text: string): React.ReactNode[] => {
     });
 };
 
-export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, onAddWidget, onAddBookmark, onAddWebApp, externalPrompt, onClearExternalPrompt }) => {
+export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, onAddWidget, onAddBookmark, onAddWebApp, externalPrompt, onClearExternalPrompt, chatHistories, onSaveChat, onLoadChatMessages, onDeleteChat, onRenameChat }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showChatList, setShowChatList] = useState(false);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [currentChatName, setCurrentChatName] = useState('New Chat');
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [confirmDeleteChatId, setConfirmDeleteChatId] = useState<string | null>(null);
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [editingChatName, setEditingChatName] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<any[]>([]);
@@ -198,6 +209,110 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
           setIsLoading(false);
       }
   };
+
+  // Chat History Functions
+  const generateChatName = (messages: ChatMessage[]): string => {
+      if (messages.length === 0) return 'New Chat';
+      const firstUserMsg = messages.find(m => m.role === 'user');
+      if (firstUserMsg) {
+          const preview = firstUserMsg.text.slice(0, 30);
+          return preview.length < firstUserMsg.text.length ? `${preview}...` : preview;
+      }
+      return 'New Chat';
+  };
+
+  const handleSaveCurrentChat = async () => {
+      if (messages.length > 0) {
+          const chatName = currentChatId
+              ? currentChatName
+              : generateChatName(messages);
+          const savedId = await onSaveChat(currentChatId, chatName, settings.mode, settings.provider, messages);
+          if (!currentChatId) {
+              setCurrentChatId(savedId);
+          }
+      }
+  };
+
+  const handleLoadChat = async (chat: ChatHistory) => {
+      // Save current chat before switching
+      if (messages.length > 0 && currentChatId !== chat.id) {
+          await handleSaveCurrentChat();
+      }
+
+      // Load the selected chat messages
+      const loadedMessages = await onLoadChatMessages(chat.id);
+      setMessages(loadedMessages);
+      setCurrentChatId(chat.id);
+      setCurrentChatName(chat.name);
+      setShowChatList(false);
+
+      // Switch mode to match the chat's original mode
+      if (settings.mode !== chat.mode) {
+          onUpdateSettings({ ...settings, mode: chat.mode });
+      }
+
+      // Rebuild history for API
+      historyRef.current = loadedMessages.map(msg => ({
+          role: msg.role,
+          parts: [{ text: msg.text }]
+      }));
+  };
+
+  const handleNewChat = async () => {
+      // Save current chat before creating new one
+      if (messages.length > 0) {
+          await handleSaveCurrentChat();
+      }
+
+      clearChat();
+      setCurrentChatId(null);
+      setCurrentChatName('New Chat');
+      setShowChatList(false);
+  };
+
+  const handleDeleteChat = (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (confirmDeleteChatId === id) {
+          onDeleteChat(id);
+          if (currentChatId === id) {
+              handleNewChat();
+          }
+          setConfirmDeleteChatId(null);
+      } else {
+          setConfirmDeleteChatId(id);
+          setTimeout(() => setConfirmDeleteChatId(null), 3000);
+      }
+  };
+
+  const handleRenameChat = (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      const chat = chatHistories.find(h => h.id === id);
+      if (chat) {
+          setEditingChatId(id);
+          setEditingChatName(chat.name);
+      }
+  };
+
+  const handleSaveRename = (id: string) => {
+      if (editingChatName.trim()) {
+          onRenameChat(id, editingChatName.trim());
+          if (currentChatId === id) {
+              setCurrentChatName(editingChatName.trim());
+          }
+      }
+      setEditingChatId(null);
+      setEditingChatName('');
+  };
+
+  // Auto-save when messages change
+  useEffect(() => {
+      if (messages.length > 0) {
+          const timeoutId = setTimeout(() => {
+              handleSaveCurrentChat();
+          }, 2000); // Save 2 seconds after last message
+          return () => clearTimeout(timeoutId);
+      }
+  }, [messages]);
 
   const toolExecutors: ToolExecutors = {
     addWidget: async (args) => {
@@ -510,16 +625,26 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       {/* Header Area */}
       <div className="flex items-center justify-between px-3 py-3 border-b border-lrgex-border shrink-0 bg-lrgex-menu/50">
         <div className="flex items-center gap-2">
+            <button
+                onClick={() => setShowChatList(!showChatList)}
+                className={`text-lrgex-muted hover:text-lrgex-text transition-colors ${showChatList ? 'text-lrgex-orange' : ''}`}
+                title="Chat History"
+            >
+                <MessageSquare size={14} />
+            </button>
             {settings.mode === 'COMMANDER' ? (
                  <ShieldAlert size={14} className="text-lrgex-orange" />
             ) : (
                  <Bot size={14} className="text-emerald-400" />
             )}
-            <span className="text-xs font-medium text-lrgex-text">
-                {settings.mode === 'COMMANDER' ? 'AI Commander' : 'AI Assistant'}
+            <span className="text-xs font-medium text-lrgex-text truncate max-w-[150px]">
+                {currentChatName}
             </span>
         </div>
         <div className="flex gap-2">
+             <button onClick={handleNewChat} className="text-lrgex-muted hover:text-emerald-400 p-0.5" title="New Chat">
+                <Plus size={14} />
+            </button>
              <button onClick={clearChat} className="text-lrgex-muted hover:text-red-400 p-0.5" title="Clear Chat History">
                 <Trash2 size={14} />
             </button>
@@ -538,6 +663,101 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
             </button>
         </div>
       </div>
+
+      {/* Chat History Sidebar */}
+      {showChatList && (
+        <div className="absolute top-[52px] left-0 right-0 bottom-0 bg-lrgex-bg/95 backdrop-blur-sm z-10 flex flex-col">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-lrgex-border">
+            <h3 className="text-xs font-bold text-lrgex-text">Chat History</h3>
+            <button onClick={() => setShowChatList(false)} className="text-lrgex-muted hover:text-lrgex-text">
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {chatHistories.length === 0 ? (
+              <div className="text-center text-lrgex-muted text-xs p-4">
+                No saved chats yet
+              </div>
+            ) : (
+              <div className="space-y-1 p-2">
+                {chatHistories
+                  .sort((a, b) => b.updatedAt - a.updatedAt)
+                  .map(chat => (
+                    <div
+                      key={chat.id}
+                      onClick={() => handleLoadChat(chat)}
+                      className={`p-2 rounded-lg cursor-pointer transition-all group hover:bg-lrgex-hover ${
+                        currentChatId === chat.id ? 'bg-lrgex-orange/20 border border-lrgex-orange/30' : 'border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          {editingChatId === chat.id ? (
+                            <input
+                              autoFocus
+                              type="text"
+                              value={editingChatName}
+                              onChange={(e) => setEditingChatName(e.target.value)}
+                              onBlur={() => handleSaveRename(chat.id)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveRename(chat.id);
+                                if (e.key === 'Escape') setEditingChatId(null);
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full bg-lrgex-bg border border-lrgex-orange rounded px-1 py-0.5 text-xs text-lrgex-text outline-none"
+                            />
+                          ) : (
+                            <div className="text-xs font-medium text-lrgex-text truncate">
+                              {chat.name}
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                              chat.mode === 'COMMANDER'
+                                ? 'bg-lrgex-orange/20 text-lrgex-orange border border-lrgex-orange/30'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            }`}>
+                              {chat.mode}
+                            </span>
+                            <span className="text-[9px] text-lrgex-muted">
+                              {chat.messageCount} msg{chat.messageCount !== 1 ? 's' : ''}
+                            </span>
+                            <span className="text-[9px] text-lrgex-muted">
+                              {new Date(chat.updatedAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => handleRenameChat(chat.id, e)}
+                            className="p-1 hover:bg-lrgex-panel rounded text-lrgex-muted hover:text-blue-400"
+                            title="Rename"
+                          >
+                            <Edit2 size={10} />
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteChat(chat.id, e)}
+                            className={`p-1 hover:bg-lrgex-panel rounded transition-colors ${
+                              confirmDeleteChatId === chat.id
+                                ? 'bg-red-500 text-white'
+                                : 'text-lrgex-muted hover:text-red-400'
+                            }`}
+                            title={confirmDeleteChatId === chat.id ? 'Click again to confirm' : 'Delete'}
+                          >
+                            <Trash2 size={10} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Chat Area */}
       <div className="flex-1 overflow-y-auto space-y-4 p-3 custom-scrollbar min-h-0 pb-2">

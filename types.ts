@@ -110,12 +110,28 @@ export interface AppData {
   backupSettings: BackupSettings;
   sectionOrder: string[]; // 'widgets' | 'bookmarks' | 'webApps'
   sectionVisibility: Record<string, boolean>; // e.g. { 'widgets': true, 'bookmarks': false }
+  chatHistories: ChatHistory[]; // Saved AI chat sessions
 }
 
 export interface ChatMessage {
   role: 'user' | 'model' | 'system';
   text: string;
   image?: string; // Base64 Data URI
+}
+
+export interface ChatHistory {
+  id: string;
+  name: string;
+  mode: AiMode; // COMMANDER or ASSISTANT
+  provider: AiProvider; // GEMINI, OPENAI, etc.
+  messageCount: number; // Number of messages (for display only)
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ChatData {
+  id: string;
+  messages: ChatMessage[];
 }
 
 export interface ProxmoxNode {
