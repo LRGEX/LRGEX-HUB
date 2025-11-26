@@ -167,12 +167,22 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   const [confirmDeleteChatId, setConfirmDeleteChatId] = useState<string | null>(null);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingChatName, setEditingChatName] = useState('');
+  
+  // Refs
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const titleGeneratedRef = useRef(false);
+  
+  // This ref ensures we can track the active chat ID even inside closures of async functions
+  const chatIdRef = useRef<string | null>(null);
+
+  // Sync ref with state
+  useEffect(() => {
+      chatIdRef.current = currentChatId;
+  }, [currentChatId]);
 
   useEffect(() => {
     if (externalPrompt) {
@@ -212,46 +222,45 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       }
   };
 
-  // Chat History Functions
-  const generateChatNameLocal = (messages: ChatMessage[]): string => {
-      if (messages.length === 0) return 'New Chat';
-      const firstUserMsg = messages.find(m => m.role === 'user');
-      if (firstUserMsg) {
-          const preview = firstUserMsg.text.slice(0, 30);
-          return preview.length < firstUserMsg.text.length ? `${preview}...` : preview;
-      }
-      return 'New Chat';
-  };
-
   const handleSaveCurrentChat = async () => {
-      if (messages.length > 0) {
-          let chatName = currentChatId ? currentChatName : 'New Chat';
-          
-          // Logic: If it's a new chat OR name is default, and we have enough messages, try to generate a title
-          if ((!currentChatId || currentChatName === 'New Chat') && messages.length >= 2) {
-              if (!titleGeneratedRef.current) {
-                   titleGeneratedRef.current = true;
-                   const autoTitle = await generateChatTitle(settings, messages);
-                   if (autoTitle && autoTitle !== 'New Chat') {
-                       chatName = autoTitle;
-                       setCurrentChatName(autoTitle);
-                   } else {
-                       // Fallback to local gen if AI fails or returns empty
-                       if (!currentChatId || currentChatName === 'New Chat') {
-                           chatName = generateChatNameLocal(messages);
-                           setCurrentChatName(chatName);
-                       }
-                   }
-              }
-          } else if (!currentChatId && currentChatName === 'New Chat') {
-              // Basic fallback for first save if < 2 messages
-              chatName = generateChatNameLocal(messages);
-          }
+      if (messages.length === 0) return;
 
-          const savedId = await onSaveChat(currentChatId, chatName, settings.mode, settings.provider, messages);
-          if (!currentChatId) {
-              setCurrentChatId(savedId);
-          }
+      // 1. IMMEDIATE GENERATION: Ensure we have an ID before doing anything else
+      // This prevents race conditions where multiple saves fire while ID is null
+      if (!chatIdRef.current) {
+          const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString();
+          chatIdRef.current = newId;
+          setCurrentChatId(newId);
+      }
+
+      const activeId = chatIdRef.current;
+      let chatName = currentChatName;
+      
+      // 2. Auto-Title Logic
+      if (currentChatName === 'New Chat' && messages.length >= 2 && !titleGeneratedRef.current) {
+           titleGeneratedRef.current = true;
+           try {
+               const autoTitle = await generateChatTitle(settings, messages);
+               if (autoTitle && autoTitle !== 'New Chat') {
+                   chatName = autoTitle;
+                   setCurrentChatName(autoTitle);
+               }
+           } catch (e) {
+               console.warn("Failed to gen title", e);
+           }
+      } else if (currentChatName === 'New Chat' && messages.length > 0) {
+           // Fallback fast title
+           const first = messages.find(m => m.role === 'user');
+           if (first) {
+               chatName = first.text.slice(0, 30) + (first.text.length > 30 ? '...' : '');
+               if (chatName !== currentChatName) setCurrentChatName(chatName);
+           }
+      }
+
+      // 3. Save
+      // We pass the activeId which we guarantee is not null now.
+      if (activeId) {
+          await onSaveChat(activeId, chatName, settings.mode, settings.provider, messages);
       }
   };
 
@@ -266,7 +275,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       setMessages(loadedMessages);
       setCurrentChatId(chat.id);
       setCurrentChatName(chat.name);
-      titleGeneratedRef.current = true; // Assume loaded chats already have titles or don't need regeneration immediately
+      titleGeneratedRef.current = true;
       setShowChatList(false);
 
       // Switch mode to match the chat's original mode
@@ -305,7 +314,6 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
           setConfirmDeleteChatId(null);
       } else {
           setConfirmDeleteChatId(id);
-          // Increased timeout for better UX
           setTimeout(() => setConfirmDeleteChatId(null), 4000);
       }
   };
@@ -331,11 +339,12 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   };
 
   // Auto-save when messages change
+  // Reduced debounce time to 1s to make saving feel more "solid"
   useEffect(() => {
       if (messages.length > 0) {
           const timeoutId = setTimeout(() => {
               handleSaveCurrentChat();
-          }, 2000); // Save 2 seconds after last message
+          }, 1000); 
           return () => clearTimeout(timeoutId);
       }
   }, [messages]);

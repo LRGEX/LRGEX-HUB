@@ -1,5 +1,6 @@
 
 import React, { useEffect, useState, useRef, useMemo, ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import * as LucideIcons from 'lucide-react';
 import { AlertTriangle, Bot, Ban } from 'lucide-react';
 
@@ -45,7 +46,6 @@ class WidgetErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBound
     }
 
     componentDidUpdate(prevProps: ErrorBoundaryProps) {
-        // Reset error if the code changes (user asks AI to fix it)
         if (prevProps.codeHash !== this.props.codeHash) {
             this.setState({ hasError: false, errorMsg: '' });
         }
@@ -115,7 +115,6 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
         throw new Error(errorDetails);
     }
 
-    // Cookie handling
     const xSetCookie = response.headers.get('X-Set-Cookie');
     if (xSetCookie) {
         const originalHeaders = response.headers;
@@ -133,23 +132,19 @@ const proxyFetch = async (url: string, options: RequestInit = {}) => {
     return response;
 };
 
-// 3. Inner Component (The Dangerous Part)
+// 3. Inner Component
 const InnerCustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customData, onSetCustomData, width, height, onReportError, title }) => {
     
     const GeneratedComponent = useMemo(() => {
         try {
             if (!code || !code.trim()) return null;
 
-            // Create the function from string
             const func = new Function(
                 'React', 'useState', 'useEffect', 'useRef', 'Lucide', 'props', 'proxyFetch',
                 code
             );
 
-            // Return a wrapped component that injects safety hooks
             return (componentProps: any) => {
-                // INTERNAL RENDER GUARD
-                // This runs every time the *generated* component renders, catching internal state loops.
                 const renderCount = useRef(0);
                 const lastRenderTime = useRef(Date.now());
                 
@@ -160,22 +155,18 @@ const InnerCustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customDa
                     renderCount.current = 1;
                     lastRenderTime.current = now;
                 } else {
-                    // Relaxed settings requested by user (170 renders/sec).
-                    // This practically disables the check for animations but still catches massive infinite loops.
                     if (renderCount.current > 170) {
                         throw new Error("Infinite Render Loop Detected: The widget is updating its state too frequently.");
                     }
                 }
 
                 try {
-                    // Execute user code
                     return func(React, useState, useEffect, useRef, LucideIcons, componentProps, proxyFetch);
                 } catch (err: any) {
-                    throw err; // Throw to ErrorBoundary
+                    throw err; 
                 }
             };
         } catch (err: any) {
-            // Compilation Error (Syntax)
             return () => (
                 <div className="p-4 text-red-400 text-xs border border-red-500/20 bg-red-500/10 rounded h-full overflow-auto flex flex-col gap-2">
                     <div>
@@ -217,7 +208,44 @@ const InnerCustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({ code, customDa
     );
 };
 
-// 4. Main Wrapper (The Safety Layer)
+// 4. Shadow DOM Wrapper to Isolate Styles
+const ShadowWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const hostRef = useRef<HTMLDivElement>(null);
+    const [shadowRoot, setShadowRoot] = useState<ShadowRoot | null>(null);
+
+    useEffect(() => {
+        if (hostRef.current && !shadowRoot) {
+            const shadow = hostRef.current.attachShadow({ mode: 'open' });
+            
+            // Optional: Inject a base style reset if needed, but for now we want pure isolation.
+            // If users want Tailwind, they'd theoretically need to link it, but 
+            // "Custom Code" usually implies self-contained HTML/CSS as per the user example.
+            
+            // To ensure the widget takes up space inside the shadow root:
+            const style = document.createElement('style');
+            style.textContent = `
+                :host { display: block; width: 100%; height: 100%; overflow: hidden; }
+                .shadow-container { width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+            `;
+            shadow.appendChild(style);
+            
+            setShadowRoot(shadow);
+        }
+    }, []);
+
+    return (
+        <div ref={hostRef} className="w-full h-full">
+            {shadowRoot && createPortal(
+                <div className="shadow-container">
+                    {children}
+                </div>,
+                shadowRoot as any
+            )}
+        </div>
+    );
+};
+
+// 5. Main Wrapper
 export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = (props) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -236,20 +264,18 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = (props) => {
         return () => observer.disconnect();
     }, []);
 
-    // We purposefully do NOT put RenderGuard here anymore.
-    // The Loop usually happens inside InnerCustomCodeWidget due to state updates.
-    // The ErrorBoundary here catches errors thrown by the Internal Guard inside InnerCustomCodeWidget.
-
     return (
         <div ref={containerRef} className="w-full h-full custom-code-container relative overflow-hidden">
              {dimensions.width > 0 && (
-                <WidgetErrorBoundary onReportError={props.onReportError} codeHash={props.code} code={props.code} title={props.title}>
-                    <InnerCustomCodeWidget 
-                        {...props} 
-                        width={dimensions.width} 
-                        height={dimensions.height} 
-                    />
-                </WidgetErrorBoundary>
+                <ShadowWrapper>
+                    <WidgetErrorBoundary onReportError={props.onReportError} codeHash={props.code} code={props.code} title={props.title}>
+                        <InnerCustomCodeWidget 
+                            {...props} 
+                            width={dimensions.width} 
+                            height={dimensions.height} 
+                        />
+                    </WidgetErrorBoundary>
+                </ShadowWrapper>
              )}
         </div>
     );
