@@ -73,8 +73,8 @@ const getSystemPrompt = (settings: AiSettings) => {
          2. **Custom Widget (Playground)**: If user wants a custom UI (calculator, clock, interactive tool, or specific visualization), use 'customCode'.
          
          **IMPORTANT: HANDLING ADJUSTMENTS AND UPDATES**:
-         - If the user asks you to modify, fix, or update a widget (e.g. "make the text bigger", "fix the bug"):
-           1. **ALWAYS RE-RUN** the \`addWidget\` tool with the COMPLETE updated code/configuration. This applies the change.
+         - If the user asks you to modify, fix, or update a widget (e.g. "make the text bigger", "fix the bug", "change color"):
+           1. **ALWAYS RECREATE** the widget by calling the \`addWidget\` tool again with the COMPLETE updated code/configuration. This applies the change.
            2. **DO NOT** output the code block in the chat response unless the user explicitly asks to "show the code".
            3. Instead, simply explain the changes you made in text and trigger the tool.
          

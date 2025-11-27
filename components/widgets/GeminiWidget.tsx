@@ -25,20 +25,15 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
         await navigator.clipboard.writeText(text);
         return true;
     } catch (err) {
-        // Fallback for non-secure contexts or older browsers
         try {
             const textArea = document.createElement("textarea");
             textArea.value = text;
-            
-            // Ensure it's not visible but part of DOM
             textArea.style.position = "fixed";
             textArea.style.left = "-9999px";
             textArea.style.top = "0";
             document.body.appendChild(textArea);
-            
             textArea.focus();
             textArea.select();
-            
             const successful = document.execCommand('copy');
             document.body.removeChild(textArea);
             return successful;
@@ -177,6 +172,8 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   const titleGeneratedRef = useRef(false);
   const generatingTitlePromiseRef = useRef<Promise<string> | null>(null);
   const chatIdRef = useRef<string | null>(null);
+  const sessionIdRef = useRef<number>(Date.now());
+  const savePromiseRef = useRef<Promise<void> | null>(null);
 
   // Sync ref with state
   useEffect(() => {
@@ -216,6 +213,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       setPendingImage(null);
       titleGeneratedRef.current = false;
       generatingTitlePromiseRef.current = null;
+      sessionIdRef.current = Date.now(); // Invalidate previous session promises
       if (abortControllerRef.current) {
           abortControllerRef.current.abort();
           setIsLoading(false);
@@ -232,68 +230,77 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       return 'New Chat';
   };
 
-  // Robust save function that captures state at invocation time
+  // Robust save function with serialization and session checks
   const handleSaveCurrentChat = async () => {
-      // Capture state at the start of the save operation
-      const messagesToSave = messages;
-      const idToSaveTo = currentChatId; 
-      let nameToUse = currentChatName;
+      if (savePromiseRef.current) return savePromiseRef.current;
 
-      if (messagesToSave.length > 0) {
-          const needsTitle = !idToSaveTo || nameToUse === 'New Chat';
+      const saveOp = async () => {
+          const currentSessionId = sessionIdRef.current;
+          const messagesToSave = messages;
+          // Use ref for ID to avoid stale state closures
+          const idToSaveTo = chatIdRef.current; 
+          let nameToUse = currentChatName;
 
-          if (needsTitle) {
-              // 1. Try AI Generation if eligible (at least 2 messages for context)
-              if (messagesToSave.length >= 2) {
-                   if (!titleGeneratedRef.current) {
-                       if (!generatingTitlePromiseRef.current) {
-                           // Start generation
-                           generatingTitlePromiseRef.current = generateChatTitle(settings, messagesToSave)
-                               .then(title => {
-                                   if (title && title !== 'New Chat' && chatIdRef.current === idToSaveTo) {
-                                       setCurrentChatName(title);
-                                   }
+          if (messagesToSave.length > 0) {
+              const fallbackName = generateChatNameLocal(messagesToSave);
+              const isDefaultOrFallback = nameToUse === 'New Chat' || nameToUse === fallbackName;
+
+              // Try AI Generation if:
+              // 1. Not generated yet (or currently is fallback)
+              // 2. Has context (>= 2 messages)
+              // 3. Name is not custom (matches fallback or New Chat)
+              if (messagesToSave.length >= 2 && !titleGeneratedRef.current && isDefaultOrFallback) {
+                   if (!generatingTitlePromiseRef.current) {
+                       generatingTitlePromiseRef.current = generateChatTitle(settings, messagesToSave)
+                           .then(title => {
+                               // Verify session is still valid
+                               if (sessionIdRef.current === currentSessionId && title && title !== 'New Chat') {
+                                   setCurrentChatName(title);
+                                   titleGeneratedRef.current = true; // Mark as generated on success
                                    return title;
-                               })
-                               .catch(err => {
-                                   console.warn("AI Title Gen failed", err);
-                                   return "New Chat";
-                               })
-                               .finally(() => {
-                                   generatingTitlePromiseRef.current = null;
-                                   titleGeneratedRef.current = true;
-                               });
-                       }
-                       
-                       // Await the promise to ensure we use the title if it comes back
-                       const autoTitle = await generatingTitlePromiseRef.current;
-                       if (autoTitle && autoTitle !== 'New Chat') {
-                           nameToUse = autoTitle;
-                       }
+                               }
+                               return "New Chat";
+                           })
+                           .catch(() => "New Chat") // On failure, return "New Chat" to trigger fallback, but keep titleGeneratedRef false to retry
+                           .finally(() => {
+                               generatingTitlePromiseRef.current = null;
+                           });
+                   }
+                   
+                   const autoTitle = await generatingTitlePromiseRef.current;
+                   if (autoTitle && autoTitle !== 'New Chat' && sessionIdRef.current === currentSessionId) {
+                       nameToUse = autoTitle;
                    }
               }
 
-              // 2. Fallback to Local Generation if name is still 'New Chat'
-              // This covers cases where AI failed, returned 'New Chat', or wasn't run due to low message count
+              // Fallback to local name if AI failed or hasn't run
               if (nameToUse === 'New Chat') {
                   const localName = generateChatNameLocal(messagesToSave);
                   if (localName !== 'New Chat') {
                       nameToUse = localName;
-                      if (chatIdRef.current === idToSaveTo) {
+                      if (sessionIdRef.current === currentSessionId) {
                           setCurrentChatName(nameToUse);
                       }
                   }
               }
+              
+              if (sessionIdRef.current === currentSessionId) {
+                  const savedId = await onSaveChat(idToSaveTo, nameToUse, settings.mode, settings.provider, messagesToSave);
+                  
+                  // Update ID if we saved a new chat
+                  if (!idToSaveTo && chatIdRef.current === null && sessionIdRef.current === currentSessionId) {
+                      chatIdRef.current = savedId;
+                      setCurrentChatId(savedId);
+                  }
+              }
           }
+      };
 
-          const savedId = await onSaveChat(idToSaveTo, nameToUse, settings.mode, settings.provider, messagesToSave);
-          
-          // If we were saving a new chat (null ID), update state to the new ID
-          // But ONLY if the user hasn't navigated away (checked via chatIdRef)
-          if (!idToSaveTo && chatIdRef.current === null) {
-              chatIdRef.current = savedId;
-              setCurrentChatId(savedId);
-          }
+      savePromiseRef.current = saveOp();
+      try {
+          await savePromiseRef.current;
+      } finally {
+          savePromiseRef.current = null;
       }
   };
 
@@ -303,20 +310,20 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
           await handleSaveCurrentChat();
       }
 
-      // Load the selected chat messages
+      // Reset session first
+      sessionIdRef.current = Date.now();
+      
       const loadedMessages = await onLoadChatMessages(chat.id);
       setMessages(loadedMessages);
       setCurrentChatId(chat.id);
       setCurrentChatName(chat.name);
-      titleGeneratedRef.current = true;
+      titleGeneratedRef.current = true; // Loaded chats assume valid titles
       setShowChatList(false);
 
-      // Switch mode to match the chat's original mode
       if (settings.mode !== chat.mode) {
           onUpdateSettings({ ...settings, mode: chat.mode });
       }
 
-      // Rebuild history for API
       historyRef.current = loadedMessages.map(msg => ({
           role: msg.role,
           parts: [{ text: msg.text }]
@@ -324,7 +331,6 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   };
 
   const handleNewChat = async () => {
-      // Save current chat before creating new one
       if (messages.length > 0) {
           await handleSaveCurrentChat();
       }
@@ -336,17 +342,14 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   };
 
   const handleModeSwitch = async () => {
-      // 1. Save current chat if it exists
       if (messages.length > 0) {
            await handleSaveCurrentChat();
       }
       
-      // 2. Clear everything (Simulate New Chat) to avoid ID collision
       clearChat();
       setCurrentChatId(null);
       setCurrentChatName('New Chat');
       
-      // 3. Flip Mode
       const newMode = settings.mode === 'COMMANDER' ? 'ASSISTANT' : 'COMMANDER';
       onUpdateSettings({ ...settings, mode: newMode });
   };
@@ -381,6 +384,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
           onRenameChat(id, editingChatName.trim());
           if (currentChatId === id) {
               setCurrentChatName(editingChatName.trim());
+              titleGeneratedRef.current = true; // User manually named it
           }
       }
       setEditingChatId(null);
