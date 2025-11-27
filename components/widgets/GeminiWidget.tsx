@@ -175,8 +175,6 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const titleGeneratedRef = useRef(false);
-  
-  // This ref ensures we can track the active chat ID even inside closures of async functions
   const chatIdRef = useRef<string | null>(null);
 
   // Sync ref with state
@@ -222,45 +220,51 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       }
   };
 
+  const generateChatNameLocal = (messages: ChatMessage[]): string => {
+      if (messages.length === 0) return 'New Chat';
+      const firstUserMsg = messages.find(m => m.role === 'user');
+      if (firstUserMsg) {
+          const preview = firstUserMsg.text.slice(0, 30);
+          return preview.length < firstUserMsg.text.length ? `${preview}...` : preview;
+      }
+      return 'New Chat';
+  };
+
   const handleSaveCurrentChat = async () => {
-      if (messages.length === 0) return;
+      if (messages.length > 0) {
+          // Use ref to check active ID to avoid race conditions with closures
+          let activeId = chatIdRef.current;
+          let chatName = activeId ? currentChatName : 'New Chat';
+          
+          // Logic: If it's a new chat OR name is default, and we have enough messages
+          if ((!activeId || currentChatName === 'New Chat') && messages.length >= 2) {
+              if (!titleGeneratedRef.current) {
+                   titleGeneratedRef.current = true;
+                   const autoTitle = await generateChatTitle(settings, messages);
+                   if (autoTitle && autoTitle !== 'New Chat') {
+                       chatName = autoTitle;
+                       setCurrentChatName(autoTitle);
+                   } else {
+                       if (!activeId || currentChatName === 'New Chat') {
+                           chatName = generateChatNameLocal(messages);
+                           setCurrentChatName(chatName);
+                       }
+                   }
+              }
+          } else if (!activeId && currentChatName === 'New Chat') {
+              chatName = generateChatNameLocal(messages);
+              if (chatName !== 'New Chat') setCurrentChatName(chatName);
+          }
 
-      // 1. IMMEDIATE GENERATION: Ensure we have an ID before doing anything else
-      // This prevents race conditions where multiple saves fire while ID is null
-      if (!chatIdRef.current) {
-          const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString();
-          chatIdRef.current = newId;
-          setCurrentChatId(newId);
-      }
+          // Check ref again in case it changed while waiting (e.g. during title generation)
+          if (chatIdRef.current) activeId = chatIdRef.current;
 
-      const activeId = chatIdRef.current;
-      let chatName = currentChatName;
-      
-      // 2. Auto-Title Logic
-      if (currentChatName === 'New Chat' && messages.length >= 2 && !titleGeneratedRef.current) {
-           titleGeneratedRef.current = true;
-           try {
-               const autoTitle = await generateChatTitle(settings, messages);
-               if (autoTitle && autoTitle !== 'New Chat') {
-                   chatName = autoTitle;
-                   setCurrentChatName(autoTitle);
-               }
-           } catch (e) {
-               console.warn("Failed to gen title", e);
-           }
-      } else if (currentChatName === 'New Chat' && messages.length > 0) {
-           // Fallback fast title
-           const first = messages.find(m => m.role === 'user');
-           if (first) {
-               chatName = first.text.slice(0, 30) + (first.text.length > 30 ? '...' : '');
-               if (chatName !== currentChatName) setCurrentChatName(chatName);
-           }
-      }
-
-      // 3. Save
-      // We pass the activeId which we guarantee is not null now.
-      if (activeId) {
-          await onSaveChat(activeId, chatName, settings.mode, settings.provider, messages);
+          const savedId = await onSaveChat(activeId, chatName, settings.mode, settings.provider, messages);
+          
+          if (!activeId || activeId !== savedId) {
+              chatIdRef.current = savedId;
+              setCurrentChatId(savedId);
+          }
       }
   };
 
@@ -339,12 +343,11 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   };
 
   // Auto-save when messages change
-  // Reduced debounce time to 1s to make saving feel more "solid"
   useEffect(() => {
       if (messages.length > 0) {
           const timeoutId = setTimeout(() => {
               handleSaveCurrentChat();
-          }, 1000); 
+          }, 2000); // Save 2 seconds after last message
           return () => clearTimeout(timeoutId);
       }
   }, [messages]);
