@@ -89,10 +89,6 @@ const getSystemPrompt = (settings: AiSettings) => {
            - Always use \`className: 'w-full h-full'\` for the root element.
            - Use Flexbox/Grid to center content.
          
-         **RENDERING & VISUALS**:
-         - **Default**: The runtime uses \`image-rendering: pixelated\` to prevent artifacts in games/canvas.
-         - **Photos/High-Res**: If creating a **Photo Gallery** or displaying **smooth images**, you MUST override this by adding \`style={{ imageRendering: 'auto' }}\` to the container or specific \`img\` elements.
-         
          **CRITICAL: CORS AND FETCHING**:
          - Standard \`fetch\` will fail for most local services (Proxmox, Sonarr, etc.) due to CORS.
          - **ALWAYS USE \`proxyFetch(url, options)\` instead of \`fetch\`**.

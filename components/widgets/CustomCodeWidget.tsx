@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { AlertTriangle, Bot, Loader2 } from 'lucide-react';
 
@@ -112,8 +113,6 @@ const IFRAME_HTML = `<!DOCTYPE html>
             overflow: hidden; 
             background-color: transparent !important;
             color: #f0f0f0; 
-            /* Fix for canvas artifacts in some games */
-            image-rendering: pixelated;
         }
         #root { 
             width: 100%; 
