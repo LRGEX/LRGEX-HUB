@@ -230,38 +230,48 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       return 'New Chat';
   };
 
+  // Robust save function that captures state at invocation time
   const handleSaveCurrentChat = async () => {
-      if (messages.length > 0) {
-          // Use ref to check active ID to avoid race conditions with closures
-          let activeId = chatIdRef.current;
-          let chatName = activeId ? currentChatName : 'New Chat';
-          
+      // Capture state at the start of the save operation
+      const messagesToSave = messages;
+      const idToSaveTo = currentChatId; 
+      let nameToUse = currentChatName;
+
+      if (messagesToSave.length > 0) {
           // Logic: If it's a new chat OR name is default, and we have enough messages
-          if ((!activeId || currentChatName === 'New Chat') && messages.length >= 2) {
+          if ((!idToSaveTo || nameToUse === 'New Chat') && messagesToSave.length >= 2) {
               if (!titleGeneratedRef.current) {
                    titleGeneratedRef.current = true;
-                   const autoTitle = await generateChatTitle(settings, messages);
+                   // Note: settings might have changed if user toggled mode quickly, but we use current settings 
+                   // as the chat mode is determined by the current view
+                   const autoTitle = await generateChatTitle(settings, messagesToSave);
                    if (autoTitle && autoTitle !== 'New Chat') {
-                       chatName = autoTitle;
-                       setCurrentChatName(autoTitle);
+                       nameToUse = autoTitle;
+                       // Only update state if the user hasn't switched chats
+                       if (chatIdRef.current === idToSaveTo) {
+                           setCurrentChatName(autoTitle);
+                       }
                    } else {
-                       if (!activeId || currentChatName === 'New Chat') {
-                           chatName = generateChatNameLocal(messages);
-                           setCurrentChatName(chatName);
+                       if (!idToSaveTo || nameToUse === 'New Chat') {
+                           nameToUse = generateChatNameLocal(messagesToSave);
+                           if (chatIdRef.current === idToSaveTo) {
+                               setCurrentChatName(nameToUse);
+                           }
                        }
                    }
               }
-          } else if (!activeId && currentChatName === 'New Chat') {
-              chatName = generateChatNameLocal(messages);
-              if (chatName !== 'New Chat') setCurrentChatName(chatName);
+          } else if (!idToSaveTo && nameToUse === 'New Chat') {
+              nameToUse = generateChatNameLocal(messagesToSave);
+              if (nameToUse !== 'New Chat' && chatIdRef.current === idToSaveTo) {
+                  setCurrentChatName(nameToUse);
+              }
           }
 
-          // Check ref again in case it changed while waiting (e.g. during title generation)
-          if (chatIdRef.current) activeId = chatIdRef.current;
-
-          const savedId = await onSaveChat(activeId, chatName, settings.mode, settings.provider, messages);
+          const savedId = await onSaveChat(idToSaveTo, nameToUse, settings.mode, settings.provider, messagesToSave);
           
-          if (!activeId || activeId !== savedId) {
+          // If we were saving a new chat (null ID), update state to the new ID
+          // But ONLY if the user hasn't navigated away (checked via chatIdRef)
+          if (!idToSaveTo && chatIdRef.current === null) {
               chatIdRef.current = savedId;
               setCurrentChatId(savedId);
           }
@@ -304,6 +314,22 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       setCurrentChatId(null);
       setCurrentChatName('New Chat');
       setShowChatList(false);
+  };
+
+  const handleModeSwitch = async () => {
+      // 1. Save current chat if it exists
+      if (messages.length > 0) {
+           await handleSaveCurrentChat();
+      }
+      
+      // 2. Clear everything (Simulate New Chat) to avoid ID collision
+      clearChat();
+      setCurrentChatId(null);
+      setCurrentChatName('New Chat');
+      
+      // 3. Flip Mode
+      const newMode = settings.mode === 'COMMANDER' ? 'ASSISTANT' : 'COMMANDER';
+      onUpdateSettings({ ...settings, mode: newMode });
   };
 
   const handleDeleteChat = (id: string, e: React.MouseEvent) => {
@@ -687,10 +713,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
                 <Trash2 size={14} />
             </button>
             <button 
-                onClick={() => {
-                    onUpdateSettings({...settings, mode: settings.mode === 'COMMANDER' ? 'ASSISTANT' : 'COMMANDER'});
-                    clearChat();
-                }}
+                onClick={handleModeSwitch}
                 className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${settings.mode === 'COMMANDER' ? 'bg-lrgex-orange/20 border-lrgex-orange text-lrgex-orange' : 'bg-emerald-500/20 border-emerald-500 text-emerald-300'}`}
                 title={settings.mode === 'COMMANDER' ? "Switch to Safe Mode" : "Switch to Admin Mode"}
             >
