@@ -71,11 +71,37 @@ const IFRAME_HTML = `<!DOCTYPE html>
     <script type="importmap">
     {
       "imports": {
-        "react": "https://aistudiocdn.com/react@^19.2.0",
-        "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-        "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0"
+        "react": "https://aistudiocdn.com/react@18.3.1",
+        "react-dom/": "https://aistudiocdn.com/react-dom@18.3.1/",
+        "lucide-react": "https://aistudiocdn.com/lucide-react@0.378.0"
       }
     }
+    </script>
+    <script>
+        // Proxy console methods to parent for easier debugging
+        ['log', 'warn', 'error', 'info', 'debug'].forEach(method => {
+            const original = console[method];
+            console[method] = (...args) => {
+                original.apply(console, args); 
+                try {
+                    // Simple serialization for basic types
+                    const serialized = args.map(arg => {
+                        if (arg instanceof Error) return arg.message;
+                        if (typeof arg === 'object') {
+                            try { return JSON.stringify(arg); } catch(e) { return '[Circular/Unserializable]'; }
+                        }
+                        return String(arg);
+                    });
+                    window.parent.postMessage({
+                        type: 'CONSOLE',
+                        method,
+                        args: serialized
+                    }, '*');
+                } catch (e) {
+                    // Ignore messaging errors
+                }
+            };
+        });
     </script>
     <style>
         body, html { 
@@ -210,9 +236,14 @@ const IFRAME_HTML = `<!DOCTYPE html>
                     if (!window.pendingFetches) window.pendingFetches = {};
                     window.pendingFetches[id] = { resolve, reject };
                     
-                    // Sanitize options to prevent DataCloneError with AbortSignal
+                    // Sanitize options to prevent DataCloneError
                     const safeOptions = { ...options };
                     delete safeOptions.signal;
+                    
+                    // Normalize headers to plain object if needed
+                    if (safeOptions.headers && safeOptions.headers instanceof Headers) {
+                        safeOptions.headers = Object.fromEntries(safeOptions.headers.entries());
+                    }
 
                     window.parent.postMessage({ type: 'PROXY_FETCH', id, url, options: safeOptions }, '*');
                 });
@@ -320,6 +351,10 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({
 
             case 'REPORT_ERROR':
                 setCrashError(data.error);
+                break;
+
+            case 'CONSOLE':
+                console.log(`%c[Widget] ${data.method.toUpperCase()}:`, 'color: #cd7f32; font-weight: bold;', ...(data.args || []));
                 break;
 
             case 'PROXY_FETCH':
