@@ -41,6 +41,8 @@ const performProxyFetch = async (url: string, options: any = {}) => {
     };
 };
 
+// Iframe HTML Content
+// Uses esm.sh for React 19 and Lucide to ensure compatibility inside the sandboxed environment
 const IFRAME_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -71,20 +73,19 @@ const IFRAME_HTML = `<!DOCTYPE html>
     <script type="importmap">
     {
       "imports": {
-        "react": "https://aistudiocdn.com/react@18.3.1",
-        "react-dom/": "https://aistudiocdn.com/react-dom@18.3.1/",
-        "lucide-react": "https://aistudiocdn.com/lucide-react@0.378.0"
+        "react": "https://esm.sh/react@19.0.0",
+        "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.475.0"
       }
     }
     </script>
     <script>
-        // Proxy console methods to parent for easier debugging
+        // Console Proxy: Forwards console logs from iframe to parent window for debugging
         ['log', 'warn', 'error', 'info', 'debug'].forEach(method => {
             const original = console[method];
             console[method] = (...args) => {
                 original.apply(console, args); 
                 try {
-                    // Simple serialization for basic types
                     const serialized = args.map(arg => {
                         if (arg instanceof Error) return arg.message;
                         if (typeof arg === 'object') {
@@ -119,7 +120,7 @@ const IFRAME_HTML = `<!DOCTYPE html>
             display: flex; 
             flex-direction: column; 
         }
-        /* Scrollbars */
+        /* Custom scrollbars to match app */
         ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
@@ -130,10 +131,10 @@ const IFRAME_HTML = `<!DOCTYPE html>
     <div id="root"></div>
     <script type="module">
         import React, { useState, useEffect, useRef, useMemo } from 'react';
-        import ReactDOM from 'react-dom/client';
+        import { createRoot } from 'react-dom/client';
         import * as Lucide from 'lucide-react';
 
-        // Internal Error Boundary to catch render crashes
+        // Internal Error Boundary to catch render crashes inside the iframe
         class ErrorBoundary extends React.Component {
             constructor(props) {
                 super(props);
@@ -192,6 +193,7 @@ const IFRAME_HTML = `<!DOCTYPE html>
                                 };
                                 const res = new Response(data.response.body, init);
                                 
+                                // Restore X-Set-Cookie behavior for emulation
                                 if (data.response.xSetCookie) {
                                     Object.defineProperty(res, 'headers', {
                                         value: {
@@ -220,7 +222,7 @@ const IFRAME_HTML = `<!DOCTYPE html>
                 return new Promise((resolve, reject) => {
                     const id = Math.random().toString(36).substr(2, 9);
                     
-                    // Handle AbortSignal locally
+                    // Handle AbortSignal locally inside iframe because it's not cloneable via postMessage
                     if (options.signal) {
                         if (options.signal.aborted) {
                             return reject(new DOMException('Aborted', 'AbortError'));
@@ -257,7 +259,7 @@ const IFRAME_HTML = `<!DOCTYPE html>
             const GeneratedComponent = useMemo(() => {
                 if (!code) return null;
                 try {
-                    // Safe evaluation inside module scope
+                    // Safe evaluation inside module scope using Function constructor
                     const func = new Function('React', 'useState', 'useEffect', 'useRef', 'Lucide', 'props', 'proxyFetch', code);
                     return (componentProps) => func(React, useState, useEffect, useRef, Lucide, componentProps, proxyFetch);
                 } catch (e) {
@@ -276,6 +278,7 @@ const IFRAME_HTML = `<!DOCTYPE html>
 
             if (!GeneratedComponent) return React.createElement('div', { className: 'h-full flex items-center justify-center text-lrgex-muted text-xs' }, 'Initializing...');
 
+            // Pass real-time dimensions to widget
             return React.createElement(GeneratedComponent, {
                 width: props.width,
                 height: props.height,
@@ -284,7 +287,7 @@ const IFRAME_HTML = `<!DOCTYPE html>
             });
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
+        const root = createRoot(document.getElementById('root'));
         root.render(React.createElement(ErrorBoundary, null, React.createElement(WidgetRunner)));
     </script>
 </body>
@@ -327,6 +330,11 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({
 
     // Message Handler
     const handleMessage = useCallback(async (event: MessageEvent) => {
+        // SECURITY CRITICAL: Only accept messages from our own iframe
+        if (event.source !== iframeRef.current?.contentWindow) {
+            return;
+        }
+
         const data = event.data;
         if (!data) return;
 
@@ -415,7 +423,7 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({
             />
             
             {!isReady && (
-                <div className="absolute inset-0 flex items-center justify-center bg-lrgex-panel/50 backdrop-blur-sm z-10">
+                <div className="absolute inset-0 flex items-center justify-center bg-lrgex-panel/50 backdrop-blur-sm z-10 pointer-events-none">
                     <Loader2 className="animate-spin text-lrgex-orange" size={20} />
                 </div>
             )}

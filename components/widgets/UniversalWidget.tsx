@@ -186,7 +186,7 @@ export const UniversalWidget: React.FC<UniversalWidgetProps> = ({ config, onUpda
       if (onUpdate && config) {
           onUpdate({
               ...config,
-              customData: newData
+              customData: { ...(config.customData || {}), ...newData }
           });
       }
   };
