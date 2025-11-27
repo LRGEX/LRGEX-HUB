@@ -175,6 +175,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const titleGeneratedRef = useRef(false);
+  const generatingTitlePromiseRef = useRef<Promise<string> | null>(null);
   const chatIdRef = useRef<string | null>(null);
 
   // Sync ref with state
@@ -214,6 +215,7 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       historyRef.current = [];
       setPendingImage(null);
       titleGeneratedRef.current = false;
+      generatingTitlePromiseRef.current = null;
       if (abortControllerRef.current) {
           abortControllerRef.current.abort();
           setIsLoading(false);
@@ -238,32 +240,49 @@ export const AiWidget: React.FC<AiWidgetProps> = ({ settings, onUpdateSettings, 
       let nameToUse = currentChatName;
 
       if (messagesToSave.length > 0) {
-          // Logic: If it's a new chat OR name is default, and we have enough messages
-          if ((!idToSaveTo || nameToUse === 'New Chat') && messagesToSave.length >= 2) {
-              if (!titleGeneratedRef.current) {
-                   titleGeneratedRef.current = true;
-                   // Note: settings might have changed if user toggled mode quickly, but we use current settings 
-                   // as the chat mode is determined by the current view
-                   const autoTitle = await generateChatTitle(settings, messagesToSave);
-                   if (autoTitle && autoTitle !== 'New Chat') {
-                       nameToUse = autoTitle;
-                       // Only update state if the user hasn't switched chats
-                       if (chatIdRef.current === idToSaveTo) {
-                           setCurrentChatName(autoTitle);
+          const needsTitle = !idToSaveTo || nameToUse === 'New Chat';
+
+          if (needsTitle) {
+              // 1. Try AI Generation if eligible (at least 2 messages for context)
+              if (messagesToSave.length >= 2) {
+                   if (!titleGeneratedRef.current) {
+                       if (!generatingTitlePromiseRef.current) {
+                           // Start generation
+                           generatingTitlePromiseRef.current = generateChatTitle(settings, messagesToSave)
+                               .then(title => {
+                                   if (title && title !== 'New Chat' && chatIdRef.current === idToSaveTo) {
+                                       setCurrentChatName(title);
+                                   }
+                                   return title;
+                               })
+                               .catch(err => {
+                                   console.warn("AI Title Gen failed", err);
+                                   return "New Chat";
+                               })
+                               .finally(() => {
+                                   generatingTitlePromiseRef.current = null;
+                                   titleGeneratedRef.current = true;
+                               });
                        }
-                   } else {
-                       if (!idToSaveTo || nameToUse === 'New Chat') {
-                           nameToUse = generateChatNameLocal(messagesToSave);
-                           if (chatIdRef.current === idToSaveTo) {
-                               setCurrentChatName(nameToUse);
-                           }
+                       
+                       // Await the promise to ensure we use the title if it comes back
+                       const autoTitle = await generatingTitlePromiseRef.current;
+                       if (autoTitle && autoTitle !== 'New Chat') {
+                           nameToUse = autoTitle;
                        }
                    }
               }
-          } else if (!idToSaveTo && nameToUse === 'New Chat') {
-              nameToUse = generateChatNameLocal(messagesToSave);
-              if (nameToUse !== 'New Chat' && chatIdRef.current === idToSaveTo) {
-                  setCurrentChatName(nameToUse);
+
+              // 2. Fallback to Local Generation if name is still 'New Chat'
+              // This covers cases where AI failed, returned 'New Chat', or wasn't run due to low message count
+              if (nameToUse === 'New Chat') {
+                  const localName = generateChatNameLocal(messagesToSave);
+                  if (localName !== 'New Chat') {
+                      nameToUse = localName;
+                      if (chatIdRef.current === idToSaveTo) {
+                          setCurrentChatName(nameToUse);
+                      }
+                  }
               }
           }
 
