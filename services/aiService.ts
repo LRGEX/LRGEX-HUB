@@ -72,6 +72,12 @@ const getSystemPrompt = (settings: AiSettings) => {
          1. **Standard Widget**: If user wants to display data from an API, use 'endpoint' and 'jsonPath'.
          2. **Custom Widget (Playground)**: If user wants a custom UI (calculator, clock, interactive tool, or specific visualization), use 'customCode'.
          
+         **IMPORTANT: HANDLING ADJUSTMENTS AND UPDATES**:
+         - If the user asks you to modify, fix, or update a widget (e.g. "make the text bigger", "fix the bug"):
+           1. **ALWAYS RE-RUN** the \`addWidget\` tool with the COMPLETE updated code/configuration. This applies the change.
+           2. **DO NOT** output the code block in the chat response unless the user explicitly asks to "show the code".
+           3. Instead, simply explain the changes you made in text and trigger the tool.
+         
          RULES FOR CUSTOM CODE (React.createElement):
          - You are writing the **BODY** of a React functional component.
          - **NO JSX**. Browsers cannot run JSX. You MUST use \`React.createElement(type, props, ...children)\`.
