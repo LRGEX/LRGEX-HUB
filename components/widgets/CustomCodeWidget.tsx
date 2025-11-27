@@ -190,12 +190,31 @@ const IFRAME_HTML = `<!DOCTYPE html>
             }, []);
 
             // Bridge functions exposed to User Code
-            const proxyFetch = useMemo(() => (url, options) => {
+            const proxyFetch = useMemo(() => (url, options = {}) => {
                 return new Promise((resolve, reject) => {
                     const id = Math.random().toString(36).substr(2, 9);
+                    
+                    // Handle AbortSignal locally
+                    if (options.signal) {
+                        if (options.signal.aborted) {
+                            return reject(new DOMException('Aborted', 'AbortError'));
+                        }
+                        options.signal.addEventListener('abort', () => {
+                            if (window.pendingFetches && window.pendingFetches[id]) {
+                                delete window.pendingFetches[id];
+                                reject(new DOMException('Aborted', 'AbortError'));
+                            }
+                        });
+                    }
+
                     if (!window.pendingFetches) window.pendingFetches = {};
                     window.pendingFetches[id] = { resolve, reject };
-                    window.parent.postMessage({ type: 'PROXY_FETCH', id, url, options }, '*');
+                    
+                    // Sanitize options to prevent DataCloneError with AbortSignal
+                    const safeOptions = { ...options };
+                    delete safeOptions.signal;
+
+                    window.parent.postMessage({ type: 'PROXY_FETCH', id, url, options: safeOptions }, '*');
                 });
             }, []);
 
