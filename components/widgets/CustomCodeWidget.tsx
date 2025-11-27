@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { AlertTriangle, Bot, Loader2 } from 'lucide-react';
 
@@ -113,6 +112,8 @@ const IFRAME_HTML = `<!DOCTYPE html>
             overflow: hidden; 
             background-color: transparent !important;
             color: #f0f0f0; 
+            /* Fix for canvas artifacts in some games */
+            image-rendering: pixelated;
         }
         #root { 
             width: 100%; 
@@ -305,14 +306,17 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({
     const [crashError, setCrashError] = useState<string | null>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
-    // Track dimensions for reactivity with throttling to prevent tearing
+    // Track dimensions for reactivity with throttling
     useEffect(() => {
         if (!iframeRef.current) return;
         
         let rafId: number;
         const observer = new ResizeObserver((entries) => {
             for (const entry of entries) {
-                const { width, height } = entry.contentRect;
+                // Use Math.floor to ensure integer dimensions, preventing canvas sub-pixel artifacts
+                const width = Math.floor(entry.contentRect.width);
+                const height = Math.floor(entry.contentRect.height);
+
                 // Debounce/Throttle via RAF
                 cancelAnimationFrame(rafId);
                 rafId = requestAnimationFrame(() => {
@@ -331,6 +335,7 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({
     // Message Handler
     const handleMessage = useCallback(async (event: MessageEvent) => {
         // SECURITY CRITICAL: Only accept messages from our own iframe
+        // This prevents cross-widget data corruption
         if (event.source !== iframeRef.current?.contentWindow) {
             return;
         }

@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { UniversalWidgetConfig } from '../../types';
 import { Activity, AlertTriangle, Check, Wifi, Globe, Server, Database, Edit2, Save, Upload, Code } from 'lucide-react';
@@ -186,6 +185,7 @@ export const UniversalWidget: React.FC<UniversalWidgetProps> = ({ config, onUpda
       if (onUpdate && config) {
           onUpdate({
               ...config,
+              // Safe Merge: Merge new data with existing customData to prevent overwriting other keys
               customData: { ...(config.customData || {}), ...newData }
           });
       }
