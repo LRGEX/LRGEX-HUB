@@ -422,6 +422,7 @@ export const CustomCodeWidget: React.FC<CustomCodeWidgetProps> = ({
                 ref={iframeRef}
                 srcDoc={IFRAME_HTML}
                 className="w-full h-full border-none bg-transparent block"
+                style={{ transform: 'translateZ(0)', backfaceVisibility: 'hidden' }}
                 sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
                 title={title || "Custom Widget"}
                 allowTransparency
